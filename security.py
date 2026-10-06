@@ -1,4 +1,7 @@
 import hashlib
+import base64
+import os
+
 
 from cryptography.fernet import Fernet
 
@@ -28,6 +31,31 @@ def verify_password(password, stored_hash):
 
 
 
+# ساخت Encryption Key
+
+
+def generate_key_from_password(password, salt):
+
+    # ساخت کلید رمزنگاری از Master Password
+
+    key = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        600_000,
+        dklen=32
+    )
+
+    return base64.urlsafe_b64encode(key)
+
+
+
+
+
+
+
+
+
 
 # بخش encryption
 
@@ -49,7 +77,13 @@ def encrypt_password(password, key):
     return encrypted.decode("utf-8")
 
 
+
+
+# Decryption
+
+
 def decrypt_password(encrypt_password, key):
+    # رمزگشایی password
 
     cipher = Fernet(key)
 
@@ -60,6 +94,16 @@ def decrypt_password(encrypt_password, key):
 
     return decrypted.decode("utf-8")
 
+
+
+
+# ساخت salt
+
+def generate_salt():
+
+    # ساخت salt تصادفی 
+
+    return os.urandom(16)
 
 
 

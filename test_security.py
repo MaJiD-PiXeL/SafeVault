@@ -1,26 +1,51 @@
-from security import generate_key, encrypt_password, decrypt_password
+from security import (
+    generate_salt,
+    generate_key_from_password,
+    encrypt_password,
+    decrypt_password
+)
 
 
-# ساخت کلید
-key = generate_key()
-
-print("🔑 Key:")
-print(key.decode())
+# Master Password
+master_password = "MyMasterPassword123"
 
 
-# رمز اصلی
-password = "MySecret123"
+# ساخت Salt
+salt = generate_salt()
+
+print("Salt:")
+print(salt)
+
+
+# ساخت Encryption Key
+key = generate_key_from_password(
+    master_password,
+    salt
+)
+
+print("\nEncryption Key:")
+print(key)
+
+
+# Password واقعی
+password = "GmailPassword123"
 
 
 # رمزنگاری
-encrypted = encrypt_password(password, key)
+encrypted = encrypt_password(
+    password,
+    key
+)
 
-print("\n🔐 Encrypted:")
+print("\nEncrypted Password:")
 print(encrypted)
 
 
 # رمزگشایی
-decrypted = decrypt_password(encrypted, key)
+decrypted = decrypt_password(
+    encrypted,
+    key
+)
 
-print("\n🔓 Decrypted:")
+print("\nDecrypted Password:")
 print(decrypted)

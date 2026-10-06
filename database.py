@@ -1,49 +1,45 @@
-import sqlite3
-from pathlib import Path
+import mysql.connector
 
 
-
-DATA_DIR = Path("data")
-
-DATA_DIR.mkdir(exist_ok=True)
-
-DB_PATH = DATA_DIR / "vault.db"
-
-
-
-# اتصال به دیتابیس
 def connect_db():
-    return sqlite3.connect(DB_PATH)
+    """اتصال به MySQL"""
 
-# ساخت جدول هایی مورد نیاز 
+    return mysql.connector.connect(
+        host="localhost",
+        user="root",
+        password="M@jid1382",
+        database="safevault"
+    )
+
+
 def create_tables():
+    """ساخت جدول‌های SafeVault"""
+
     connection = connect_db()
     cursor = connection.cursor()
 
-    # vault جدول تنظیمات و اطلاعات اصلی 
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS vault(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        password_hash TEXT NOT NULL,
-        created_at TIMESTAMP DEFULT CURRENT_TIMESTAMP
-    )
+        CREATE TABLE IF NOT EXISTS vault (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            password_hash VARCHAR(64) NOT NULL,
+            salt VARCHAR(32) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
 
-""")
-
-
-    # جدول حساب های کاربر 
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS password(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            username TEXT,
+        CREATE TABLE IF NOT EXISTS passwords (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            title VARCHAR(255) NOT NULL,
+            username VARCHAR(255),
             encrypted_password TEXT NOT NULL,
-            website TEXT,
+            website VARCHAR(500),
             notes TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-""")
+        )
+    """)
 
     connection.commit()
+
+    cursor.close()
     connection.close()
-    
