@@ -81,6 +81,8 @@ def setup_master_password():
 
     print("\n✅ Master Password با موفقیت ساخته شد!")
 
+
+
     encryption_key = generate_key_from_password(
         password,
         salt
@@ -146,80 +148,82 @@ def login():
 
 
 def add_password(encryption_key):
+    """اضافه کردن یک Password جدید"""
 
-    # اضافه کردن یک password جدید 
+    print("\n➕ افزودن Password جدید")
+    print("------------------------")
 
+    # عنوان سرویس - اجباری
+    title = input("Title: ").strip()
 
-
-
-    print("\n➕ افزودن password جدید ")
-    print("------------------------------")
-
-
-
-    titel = input("Titel: ")
-    username = input("Username / Email: ")
-    password = input("Password: ")
-    website = input("Website: ")
-    notes = input("Notes: ")
-
-
-
-    # برسی عنوان 
-    if not titel:
-        print("❌ Titel نمی‌تواند خالی باشد.")
+    if not title:
+        print("❌ عنوان نمی‌تواند خالی باشد.")
         return
 
+    # Username - اختیاری
+    username = input("Username / Email (اختیاری): ").strip()
 
-    # برسی رمز 
+    # Password - اجباری
+    password = input("Password: ").strip()
+
     if not password:
         print("❌ Password نمی‌تواند خالی باشد.")
         return
 
+    # Website - اختیاری
+    website = input("Website (اختیاری): ").strip()
 
-    # رمزنگاری password
+    # Notes - اختیاری
+    notes = input("Notes (اختیاری): ").strip()
+
+    # اگر کاربر چیزی وارد نکرده، NULL ذخیره می‌کنیم
+    username = username if username else None
+    website = website if website else None
+    notes = notes if notes else None
+
+    # رمزنگاری Password
     encrypted_password = encrypt_password(
         password,
         encryption_key
     )
 
+    try:
 
+        connection = connect_db()
+        cursor = connection.cursor()
 
-    # اتصال به mysql
-
-    connection = connect_db()
-    cursor = connection.cursor()
-
-
-
-    cursor.execute(
-        """
-        INSERT INTO passwords
-        (
-            titel,
-            username,
-            encrypted_password,
-            website,
-            notes
+        cursor.execute(
+            """
+            INSERT INTO passwords
+            (
+                title,
+                username,
+                encrypted_password,
+                website,
+                notes
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (
+                title,
+                username,
+                encrypted_password,
+                website,
+                notes
+            )
         )
-        VALUES(%s, %s, %s, %s, %s)
 
-        """,
-        (
-            titel,
-            username,
-            encrypted_password,
-            website,
-            notes
-        )
-    )
+        connection.commit()
 
-    connection.commit()
+        cursor.close()
+        connection.close()
 
+        print("\n✅ Password با موفقیت ذخیره شد!")
 
-    cursor.close()
-    connection.close()
-    print("\n✅ Password با موفقیت ذخیره شد!")
+    except Exception as error:
+
+        print("\n❌ خطا در ذخیره Password:")
+        print(error)
 
 
 
@@ -308,3 +312,7 @@ def main():
 
         else:
             print("\n❌ انتخاب نامعتبر است.")
+
+
+if __name__ == "__main__":
+    main()
