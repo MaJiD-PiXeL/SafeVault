@@ -290,6 +290,52 @@ def view_passwords():
 
 
 
+def search_password():
+    # جستجوی حساب ها بر  اساس عنوان نام کاربری یا وب سایت 
+    print("\n🔎 جستجوی حساب ها ")
+    print("=" * 40)
+
+
+
+    search_query = input(
+        "نام سرویس نام کاربری یا وب سایت را وارد کنید: "
+    ).strip()
+
+
+
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def reveal_password(encryption_key):
     # رمز گشایی و نمایش رمز یک حساب
