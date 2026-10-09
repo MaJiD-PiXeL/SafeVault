@@ -3,7 +3,9 @@ from security import( hash_password,
     verify_password,
     generate_salt,
     generate_key_from_password,
-    encrypt_password
+    encrypt_password,
+    decrypt_password,
+    
 )
                      
 
@@ -226,17 +228,169 @@ def add_password(encryption_key):
         print(error)
 
 
+def view_passwords():
+    # نمایش حساب های ذخیره شده 
+
+
+    print("\n📋 حساب های ذخیره شده")
+    print("=" * 40)
+
+
+    connection = None
+    cursor = None
+
+
+
+    try:
+        connection = connect_db()
+        cursor = connection.cursor(dictionary=True)
+
+
+
+        cursor.execute("""
+            SELECT id, title,username, website, notes
+            FROM passwords
+            ORDER BY id DESC
+
+        """)
+        accounts = cursor.fetchall()
+
+        if not accounts:
+            print("هنوز هیچ حسابی دخیره نشده است.")
+            return
+
+
+
+        for account in accounts:
+            print("-" * 40)
+            print(f"ID: {account['id']}")                       
+            print(f"Service: {account['title']}")
+            print(f"Username: {account['username'] or 'ثبت نشده'}")
+            print(f"Website: {account['website'] or 'ثبت نشده'}")
+            print(f"Notes: {account['notes'] or 'ثبت نشده'}")
+
+        print("-" * 40)
+
+
+
+
+
+    except Exception as error:
+        print(f"❌خطا در دیافت حساب ها: {error}")
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+
+
+        if connection is not None and connection.is_connected():
+            connection.close()
+
+
+
+
+
+def reveal_password(encryption_key):
+    # رمز گشایی و نمایش رمز یک حساب
+
+
+    account_id = input(
+        "\nشناسه حساب مورد نظر را وارد کن"
+    ).strip()
+
+
+    if not account_id.isdigit():
+        print("❌شناسه باید عدد باشد ")
+        return
+
+
+
+    connection = None
+    cursor = None
+
+
+    try:
+        connection = connect_db()
+        cursor = connection.cursor()
+
+
+        cursor.execute(
+            """
+            SELECT titel, encrpted_password
+            FROM passwords
+            WHERE id = %s
+            """,
+            (int(account_id),)
+
+        )
+
+        account = cursor.fetchone()
+
+        if  account is None:
+            print("❌ حساب موردنظر پیدا نشد. ")
+
+
+            titel, encrypt_password = account
+
+            # رمز گشایی فقط برای حساب انتخاب شده 
+
+            password = decrypt_password(
+                encrypt_password,
+                encryption_key
+            )
+
+            print("\n🔓 رمز حساب ")            
+            print("=" * 35)
+            print(f"Service: {titel}")
+            print(f"Password: {password}")            
+            print("=" * 35)
+
+    except Exception as error:
+        print(f"❌ خطا  در بازیابی رمز: {error}")    
+
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+
+
+        if connection is not None and connection.is_connected():
+            connection.close()
+
+
+
+
+
+
+
+
 
 
 def main():
-    print("=============================================" )    
+    print("=" * 40 )    
     print("         ======= 🔐Safe Vault ======= "       )
-    print("=============================================" )
+    print("=" * 40 )
 
 
     # ساخت دیتابیس و جدول ها 
 
     create_tables()
+
+
+
+    # با ورود Master Password 
+
+    encryption_key = setup_master_password()
+
+    if not encryption_key:
+        encryption_key = login()
+
+
+    if not encryption_key:
+        print("❌ ورود ناموفق بود ")
+        return
 
 
 
@@ -280,6 +434,7 @@ def main():
         encryption_key = login()
 
         if not encryption_key:
+            print("❌ ورود ناموفق بود.")
             return
 
 
@@ -292,22 +447,36 @@ def main():
 
 
     while True:
-        print("\n====================================")
+        print("\n" + "=" * 40)
         print("          🔐SafeVault Menu ")
-        print("\n====================================")
+        print("=" * 40)
 
         print("1. ➕ Add Password")
-        print("2. 🚪 Exit")
+        print("2. 📋 view Passwords")
+        print("3. 🔓 Reveal Password")
+        print("4. 🚪 Exit")
 
 
-        choice = input("\nانتخاب شما: ")
+        choice = input("\nانتخاب شما: ").strip()
 
         if choice == "1":
 
             add_password(encryption_key)
 
         elif choice == "2":
+            view_passwords()
+
+
+
+        elif choice == "3":
+            reveal_password(encryption_key)
+
+        
+
+        elif choice == "4":
+            print("\n👋 SafeVault بسته شد.")
             break
+            
 
 
         else:
