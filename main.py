@@ -380,6 +380,143 @@ def search_password():
 
 
 
+def edit_password(encryption_key):
+
+    coonection = None
+    cursor = None
+
+
+
+    try:
+        connection = connect_db()
+        cursor = connection.cursor(dictionary=True)
+
+
+
+        account_id = input("Enter the account ID you want to edit: ").strip()
+
+        if not account_id.isdigit():
+            print("Invalid ID. Please enter a valid numeric ID.")
+            return
+
+
+        account_id = int(account_id)
+
+
+        cursor.execute(
+            """
+            SELECT id, title, username, encrypted_password, website, notes
+            FROM passwords
+            WHERE id = %s
+            """,
+            (account_id,)
+        )
+
+        account = cursor.fetchone()
+
+        if not account:
+            print("No account found with this ID.")
+            return
+
+
+        while True:
+            print("\n========== Edit Password ==========")
+            print(f"Account: {account['title']}")
+            print("1. Edit Title")
+            print("2. Edit Username / Email")            
+            print("3. Edit Password")
+            print("4. Edit Website")
+            print("5. Edit Notes")
+            print("6. Finish Editing")
+            print("=" * 25)
+
+
+
+            choice = input("Enter your choice: ").strip()
+
+
+
+            fields = {
+                "1": ("title", "Title"),
+                "2": ("username", "Username / Email"),
+                "3": ("encrypted_password", "Password"),
+                "4": ("website", "Website"),
+                "5":("notes", "Notes"),
+
+            }
+
+            if choice == "6":
+                print("Editing finished.")
+                break
+
+            if choice not in fields:
+                print("Invalid choice. Please try again.")
+                continue
+
+            field,field_name = fields[choice]
+
+
+            new_value = input(
+                f"Enter the new {field_name}: "
+            ).strip()
+
+
+            if field in ("title","encrypted_password") and not new_value:
+                print(f"{field_name} cannot be empty.")
+                continue
+
+            if field in ("username", "website", "notes"):
+                new_value = new_value if new_value else None
+
+
+            cursor.execute(
+                f"UPDATE passwords SET {field} = %s WHERE id = %s ",
+                (new_value, account_id)
+            )
+
+            connection.commit()
+
+
+            account[field] = new_value
+
+            print(f"{field_name} updated successfully!")
+    except Exception as error:
+        if connection:
+            connection.rollback()
+
+        print(f"An error occurred while editing the account: {error}")
+
+
+
+    finally:
+        if cursor:
+            cursor.close()
+
+
+        if connection:
+            connection.close()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def reveal_password(encryption_key):
     # رمز گشایی و نمایش رمز یک حساب
@@ -545,7 +682,8 @@ def main():
         print("2. 📋 view Passwords")
         print("3. 🔓 Reveal Password")
         print("4. 🔎 Search Password")
-        print("5. 🚪 Exit")
+        print("5. ✏️  Edit Password")
+        print("6. 🚪 Exit")
 
 
         choice = input("\nانتخاب شما: ").strip()
@@ -567,10 +705,15 @@ def main():
         elif choice == "4":
             search_password()
 
-        
+
 
         elif choice == "5":
-            print("\n👋 SafeVault بسته شد.")
+            edit_password(encryption_key)
+
+        
+
+        elif choice == "6":
+            print("SafeVault closed. Goodbye!")
             break
             
 
@@ -581,3 +724,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
