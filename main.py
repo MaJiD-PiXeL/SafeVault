@@ -302,37 +302,81 @@ def search_password():
     ).strip()
 
 
-
-
-    
-
-
-
+    if not search_query:
+        print("❌ عبارت جستجو نمی‌تواند خالی باشد. ")
+        return
 
 
 
+    connetion = None
+
+    cursor = None
 
 
 
+    try:
+        connetion = connect_db()
+        cursor = connetion.cursor(dictionary=True)
 
 
+        query = """
+            SELECT id,title, username, website, notes
+            FROM passwords
+            WHERE title LIKE %s
+                OR username LIKE %s
+                OR website LIKE %s
+            ORDER BY id DESC
+        """
+
+        search_pattern = f"%{search_query}%"
 
 
+        cursor.execute(
+            query,
+            (search_pattern, search_pattern, search_pattern)
+        )
+
+        accounts = cursor.fetchall()
+
+        if not accounts:
+            print("\n❌ هیچ حسابی پیدا نشد.")
+            return
 
 
+        print(f"\n✅ تعداد نتایج: {len(accounts)}")
 
 
+        for account in accounts:
+            print("\n" + "-" * 40)            
+            print(f"ID: {account['id']}")
+            print(f"Service: {account['title']}")
+            print(
+                f"Username: "
+                f"{account['username'] or 'ثبت نشده'}"
+            )
+            print(
+                f"Website: "
+                f"{account['username'] or 'ثبت نشده'}"
+            )
+            print(
+                f"Notes: "
+                f"{account['notes'] or 'ثبت نشده'}"
+            )
+
+        print("-" * 40)
 
 
+    except  Exception  as error:
+        print(f"\n❌ خطا در جستجوی حساب‌ها: {error}")
 
 
+    finally:
+        if cursor is not None:
+            cursor.close()
 
 
-
-
-
-
-
+        if connetion is not None and connetion.is_connected():
+            connetion.close()
 
 
 
@@ -500,7 +544,8 @@ def main():
         print("1. ➕ Add Password")
         print("2. 📋 view Passwords")
         print("3. 🔓 Reveal Password")
-        print("4. 🚪 Exit")
+        print("4. 🔎 Search Password")
+        print("5. 🚪 Exit")
 
 
         choice = input("\nانتخاب شما: ").strip()
@@ -517,9 +562,14 @@ def main():
         elif choice == "3":
             reveal_password(encryption_key)
 
-        
+
 
         elif choice == "4":
+            search_password()
+
+        
+
+        elif choice == "5":
             print("\n👋 SafeVault بسته شد.")
             break
             
