@@ -497,24 +497,117 @@ def edit_password(encryption_key):
             connection.close()
 
 
+def delete_password():
+    connction = None
+    cursor = None
+
+
+    try:
+        connction = connect_db()
+
+        cursor = connction.cursor(dictionary=True)
+
+
+        cursor.execute(
+            """
+            SELECT id, title, username, website, notes
+            FROM passwords
+            ORDER BY id DESC
+            """
+        )
+
+        accounts = cursor.fetchall()
+
+        if not accounts:
+            print("No saved accounts found.")
+            return
+
+        print("\n========== Saved Accounts ==========")
+
+        for account in accounts:
+            print(f"ID: {account['id']}")            
+            print(f"Title: {account['title']}")            
+            print(f"Username: {account['username'] or 'Not set'}")
+            print(f"Website: {account['website'] or 'Not set'}")
+            print(f"Notes: {account['notes'] or 'Not set'}")
+            print("------------------------------------")
+
+
+
+        account_id = input(
+            "Enter the ID of the account to delete: "
+        ).strip()
+
+
+
+        if not account_id.isdigit():\
+        print("Invalid ID. Please enter a numric ID.")
+
+        account_id = int(account_id)
+
+
+
+        cursor.execute(
+            "SELECT id, title FROM passwords WHERE id = %s",
+            (account_id,)
+        )
+
+
+
+        account = cursor.fetchone()
 
 
 
 
+        if not account:
+            print("No account found with this ID.")
+            return
+
+
+        print(f"\nselected account: {account['title']}")
+
+
+        confirmation = input(
+            "Type DELETE to confirm deletion: "
+        ).strip()
+
+
+        if confirmation != "DELETE":
+            print("Deletion cancelled")
+            return
+
+
+        cursor.execute(
+            "DELETE FROM passwords WHERE id = %s",
+            (account_id,)
+        )
 
 
 
+        connction.commit()
 
 
 
+        print("Account deleted successfully!")
+
+
+    except Exception as error:
+        if connction:
+            connction.rollback()
 
 
 
+        print(f"An error occurred while deleting the account: {error}")
 
 
 
+    finally:
+        if cursor:
+            cursor.close()
 
 
+        if connction:
+            connction.close()
 
 
 
@@ -585,12 +678,6 @@ def reveal_password(encryption_key):
 
         if connection is not None and connection.is_connected():
             connection.close()
-
-
-
-
-
-
 
 
 
@@ -683,10 +770,11 @@ def main():
         print("3. 🔓 Reveal Password")
         print("4. 🔎 Search Password")
         print("5. ✏️  Edit Password")
-        print("6. 🚪 Exit")
+        print("6. 🗑️  Delete Password")
+        print("8. 🚪 Exit")
 
 
-        choice = input("\nانتخاب شما: ").strip()
+        choice = input("Enter your choice: ").strip()
 
         if choice == "1":
 
@@ -710,9 +798,14 @@ def main():
         elif choice == "5":
             edit_password(encryption_key)
 
-        
+
 
         elif choice == "6":
+            delete_password()
+
+        
+
+        elif choice == "8":
             print("SafeVault closed. Goodbye!")
             break
             
