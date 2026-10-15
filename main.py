@@ -637,7 +637,7 @@ def reveal_password(encryption_key):
 
         cursor.execute(
             """
-            SELECT titel, encrpted_password
+            SELECT title, encrypted_password
             FROM passwords
             WHERE id = %s
             """,
