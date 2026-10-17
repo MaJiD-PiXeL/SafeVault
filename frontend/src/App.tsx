@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from "react";
 import {
   Activity,
   ArrowDownRight,
@@ -79,6 +79,40 @@ function App() {
   const [activePage, setActivePage] = useState('Overview')
   const [search, setSearch] = useState('')
   const [showAddDialog, setShowAddDialog] = useState(false)
+  const [apiStatus, setApiStatus] = useState('Checking...')
+  const [apiError, setApiError] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function checkApi() {
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/health/')
+
+        if (!response.ok) {
+          throw new Error('API request failed')
+        }
+
+        const data: { status?: string } = await response.json()
+
+        if (!cancelled) {
+          setApiStatus(data.status ?? 'Connected')
+          setApiError(false)
+        }
+      } catch {
+        if (!cancelled) {
+          setApiStatus('Offline')
+          setApiError(true)
+        }
+      }
+    }
+
+    void checkApi()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const filteredAccounts = accounts.filter((account) => {
     const query = search.toLowerCase()
@@ -232,7 +266,31 @@ function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="hidden items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 sm:flex">
+            <div
+                role="status"
+                aria-live="polite"
+                title="Connection to the local Django API"
+                className={`hidden items-center gap-2 rounded-full border px-3 py-2 text-[10px] sm:flex ${
+                  apiError
+                    ? 'border-red-500/25 bg-red-500/[0.07] text-red-300'
+                    : apiStatus === 'Checking...'
+                      ? 'border-white/[0.08] bg-white/[0.025] text-slate-400'
+                      : 'border-blue-400/20 bg-blue-500/[0.07] text-blue-300'
+                }`}
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    apiError
+                      ? 'bg-red-400'
+                      : apiStatus === 'Checking...'
+                        ? 'bg-slate-400'
+                        : 'bg-blue-400'
+                  }`}
+                />
+                Backend: {apiStatus}
+              </div>
+
+              <div className="hidden items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 sm:flex">
               <Command size={13} className="text-slate-500" />
               <span className="text-[10px] text-slate-500">
                 Personal Workspace
