@@ -1,8 +1,10 @@
 from django.contrib import admin
 from django.http import JsonResponse
 from django.urls import path, include
+from django.views.decorators.http import require_GET
 
 
+@require_GET
 def home(request):
     return JsonResponse({
         "app": "VELNAR SAFEVAULT",
@@ -14,7 +16,7 @@ def home(request):
 
 
 urlpatterns = [
-    path("", home, name="home"),
+    path("", home, name="root"),
     path("admin/", admin.site.urls),
     path("api/", include("vault.urls")),
 ]

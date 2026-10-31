@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
-  ArrowDownRight,
   ArrowUpRight,
   ChevronDown,
   CircleHelp,
@@ -24,9 +23,11 @@ import {
   Vault,
   Eye,
   MoreHorizontal,
+  X,
 } from 'lucide-react'
 
 import './index.css'
+import { checkHealth } from './api'
 
 const accounts = [
   {
@@ -69,7 +70,7 @@ const accounts = [
 
 const navigation = [
   { label: 'Overview', icon: LayoutDashboard },
-  { label: 'All Passwords', icon: KeyRound, count: '24' },
+  { label: 'All Passwords', icon: KeyRound, count: String(accounts.length) },
   { label: 'Favorites', icon: Star },
   { label: 'Secure Notes', icon: FolderLock },
   { label: 'Payment Cards', icon: CreditCard },
@@ -81,22 +82,23 @@ function App() {
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [apiStatus, setApiStatus] = useState('Checking...')
   const [apiError, setApiError] = useState(false)
+  const dialogRef = useRef<HTMLDialogElement>(null)
+
+  useEffect(() => {
+    if (showAddDialog) dialogRef.current?.showModal()
+    else dialogRef.current?.close()
+  }, [showAddDialog])
 
   useEffect(() => {
     let cancelled = false
+    const controller = new AbortController()
 
     async function checkApi() {
       try {
-        const response = await fetch('http://127.0.0.1:8000/api/health/')
-
-        if (!response.ok) {
-          throw new Error('API request failed')
-        }
-
-        const data: { status?: string } = await response.json()
+        const status = await checkHealth(controller.signal)
 
         if (!cancelled) {
-          setApiStatus(data.status ?? 'Connected')
+          setApiStatus(status)
           setApiError(false)
         }
       } catch {
@@ -108,14 +110,19 @@ function App() {
     }
 
     void checkApi()
+    const interval = window.setInterval(() => void checkApi(), 30000)
 
     return () => {
       cancelled = true
+      controller.abort()
+      window.clearInterval(interval)
     }
   }, [])
 
   const filteredAccounts = accounts.filter((account) => {
-    const query = search.toLowerCase()
+    const query = search.trim().toLowerCase()
+
+    if (activePage === 'Favorites' && !account.favorite) return false
 
     return (
       account.name.toLowerCase().includes(query) ||
@@ -300,6 +307,7 @@ function App() {
 
             <button
               aria-label="Help"
+              onClick={() => setActivePage('Help')}
               className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/[0.08] text-slate-500 hover:text-white"
             >
               <CircleHelp size={16} />
@@ -312,6 +320,12 @@ function App() {
         </header>
 
         <div className="mx-auto max-w-[1500px] px-5 py-8 sm:px-8 xl:px-11 xl:py-10">
+          <label className="mb-6 block text-sm text-slate-400 lg:hidden">
+            Navigate
+            <select value={activePage} onChange={(event) => setActivePage(event.target.value)} className="ml-3 rounded-lg border border-white/10 bg-[#0c0f15] p-2">
+              {[...navigation.map((item) => item.label), 'Security Center', 'Password Generator', 'Settings', 'Help'].map((page) => <option key={page}>{page}</option>)}
+            </select>
+          </label>
           <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
             <div>
               <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-blue-400">
@@ -320,7 +334,7 @@ function App() {
               </div>
 
               <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-[36px]">
-                Your digital vault.
+                {activePage === 'Overview' ? 'Your digital vault.' : activePage}
               </h1>
 
               <p className="mt-3 text-[12px] text-slate-500 sm:text-[13px]">
@@ -337,28 +351,28 @@ function App() {
             </button>
           </div>
 
+          {['Overview', 'All Passwords', 'Favorites'].includes(activePage) ? <>
           <div className="mt-9 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard
               icon={<Vault size={17} />}
               label="Total Items"
-              value="24"
-              detail="Stored vault items"
+              value={String(accounts.length)}
+              detail="Demo items"
               trend={<ArrowUpRight size={14} />}
             />
 
             <StatCard
               icon={<ShieldCheck size={17} />}
               label="Security Score"
-              value="92"
-              suffix="/100"
-              detail="Security overview"
+              value="—"
+              detail="Security engine not connected"
               trend={<Activity size={14} />}
             />
 
             <StatCard
               icon={<Star size={17} />}
               label="Favorites"
-              value="08"
+              value={String(accounts.filter((account) => account.favorite).length)}
               detail="Quick access items"
               trend={<ArrowUpRight size={14} />}
             />
@@ -377,7 +391,7 @@ function App() {
               <div className="flex flex-col gap-4 border-b border-white/[0.06] p-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
                 <div>
                   <h2 className="text-[14px] font-semibold text-slate-100">
-                    Recent Items
+                    {activePage === 'Overview' ? 'Recent Items' : activePage}
                   </h2>
                   <p className="mt-1.5 text-[10px] text-slate-600">
                     Your most recently accessed accounts
@@ -390,6 +404,7 @@ function App() {
 
                     <input
                       value={search}
+                      aria-label="Search items"
                       onChange={(event) => setSearch(event.target.value)}
                       placeholder="Search items..."
                       className="w-full min-w-0 bg-transparent text-[11px] text-slate-200 outline-none placeholder:text-slate-600"
@@ -468,7 +483,9 @@ function App() {
 
                     <button
                       aria-label={`More options for ${account.name}`}
-                      className="hidden h-8 w-8 items-center justify-center rounded-lg text-slate-600 hover:bg-white/[0.05] hover:text-white sm:flex"
+                      disabled
+                      title="Item actions are unavailable in this interface preview"
+                      className="hidden h-8 w-8 cursor-not-allowed items-center justify-center rounded-lg text-slate-600 opacity-50 sm:flex"
                     >
                       <MoreHorizontal size={16} />
                     </button>
@@ -582,6 +599,18 @@ function App() {
               </div>
             </div>
           </section>
+          </> : (
+            <section className="mt-9 rounded-2xl border border-white/10 bg-[#0c0f15] p-6">
+              <h2 className="text-lg font-semibold">{activePage}</h2>
+              <p className="mt-3 text-sm leading-7 text-slate-400">
+                {activePage === 'Help'
+                  ? 'This interface displays sample accounts. Real passwords are managed by the Python CLI. Vault storage, authentication and security metrics are not connected to this preview.'
+                  : activePage === 'Security Center'
+                    ? `Backend: ${apiStatus}. Vault authentication and security analysis are not connected yet.`
+                    : `${activePage} is not available in this interface preview yet.`}
+              </p>
+            </section>
+          )}
 
           <footer className="mt-10 flex flex-col gap-2 border-t border-white/[0.05] py-6 text-[10px] text-slate-600 sm:flex-row sm:items-center sm:justify-between">
             <span>
@@ -595,13 +624,13 @@ function App() {
         </div>
       </main>
 
-      {showAddDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
-          <div
-            role="dialog"
+          <dialog
+            ref={dialogRef}
+            onCancel={() => setShowAddDialog(false)}
+            onClose={() => setShowAddDialog(false)}
             aria-modal="true"
             aria-labelledby="add-item-title"
-            className="w-full max-w-md rounded-2xl border border-white/10 bg-[#0c0f15] p-6 shadow-2xl shadow-black/50"
+            className="m-auto w-[calc(100%_-_2rem)] max-w-md rounded-2xl border border-white/10 bg-[#0c0f15] p-6 text-slate-100 shadow-2xl shadow-black/50 backdrop:bg-black/75 backdrop:backdrop-blur-sm"
           >
             <div className="flex items-center justify-between">
               <div>
@@ -612,7 +641,7 @@ function App() {
                   Add new item
                 </h2>
                 <p className="mt-2 text-[11px] text-slate-500">
-                  This form is a visual prototype.
+                  Vault storage is not connected. Use the Python CLI to save and manage real passwords.
                 </p>
               </div>
 
@@ -621,11 +650,11 @@ function App() {
                 onClick={() => setShowAddDialog(false)}
                 className="rounded-lg p-2 text-slate-500 hover:bg-white/5 hover:text-white"
               >
-                <MoreHorizontal size={18} />
+                <X size={18} />
               </button>
             </div>
 
-            <div className="mt-6 space-y-4">
+            <fieldset disabled className="mt-6 space-y-4 opacity-50">
               <label className="block">
                 <span className="text-[11px] text-slate-400">Title</span>
                 <input
@@ -654,7 +683,7 @@ function App() {
                   className="mt-2 h-11 w-full rounded-xl border border-white/[0.09] bg-black/20 px-3 text-[12px] outline-none placeholder:text-slate-700 focus:border-blue-500/50"
                 />
               </label>
-            </div>
+            </fieldset>
 
             <div className="mt-7 flex gap-3">
               <button
@@ -671,9 +700,7 @@ function App() {
                 Close Preview
               </button>
             </div>
-          </div>
-        </div>
-      )}
+          </dialog>
     </div>
   )
 }

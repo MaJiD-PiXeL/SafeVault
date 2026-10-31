@@ -1,4 +1,6 @@
-from database import create_tables, connect_db
+from database import create_tables, connect_db, database_session
+from getpass import getpass
+from cryptography.fernet import InvalidToken
 from security import( hash_password,
     verify_password,
     generate_salt,
@@ -10,143 +12,59 @@ from security import( hash_password,
                      
 
 def setup_master_password():
-    """ساخت Master Password در اولین اجرای برنامه"""
+    """Create the first master password and return its encryption key."""
+    with database_session() as (connection, cursor):
+        cursor.execute("SELECT password_hash FROM vault LIMIT 1")
+        if cursor.fetchone():
+            return None
 
-    connection = connect_db()
-    cursor = connection.cursor()
+        print("\n🔐 ساخت Master Password")
+        password = getpass("Master Password: ")
+        confirm_password = getpass("تکرار Master Password: ")
+        if not password:
+            print("❌ رمز عبور نمی‌تواند خالی باشد.")
+            return None
+        if password != confirm_password:
+            print("❌ رمزها یکسان نیستند.")
+            return None
 
-    # بررسی می‌کنیم قبلاً Master Password ساخته شده یا نه
-    cursor.execute(
-        "SELECT password_hash FROM vault LIMIT 1"
-    )
-
-    result = cursor.fetchone()
-
-    # اگر قبلاً ساخته شده باشد
-    if result:
-        cursor.close()
-        connection.close()
-        return False
-
-    print("\n🔐 ساخت Master Password")
-    print("------------------------")
-
-    password = input("Master Password: ")
-    confirm_password = input("تکرار Master Password: ")
-
-    # بررسی خالی نبودن رمز
-    if not password:
-        print("❌ رمز عبور نمی‌تواند خالی باشد.")
-
-        cursor.close()
-        connection.close()
-
-        return False
-
-    # بررسی یکسان بودن رمزها
-    if password != confirm_password:
-        print("❌ رمزها یکسان نیستند.")
-
-        cursor.close()
-        connection.close()
-
-        return False
-
-    # تبدیل Master Password به Hash
-    hashed_password = hash_password(password)
-
-
-    # ساخت salt تصادفی 
-    salt = generate_salt()
-
-    # تبدیل salt به متن برای mysql
-
-    salt_hex = salt.hex()
-
-
-
-    # دخیره در mysql
-
-    cursor.execute(
-        """
-        INSERT INTO vault
-        (password_hash, salt)
-        VALUES (%s, %s)
-        """,
-        (hashed_password, salt_hex)
-    )
-
-    connection.commit()
-
-    cursor.close()
-    connection.close()
+        salt = generate_salt()
+        cursor.execute(
+            "INSERT INTO vault (password_hash, salt) VALUES (%s, %s)",
+            (hash_password(password, salt), salt.hex()),
+        )
+        connection.commit()
 
     print("\n✅ Master Password با موفقیت ساخته شد!")
-
-
-
-    encryption_key = generate_key_from_password(
-        password,
-        salt
-
-    )
-    return encryption_key
+    return generate_key_from_password(password, salt)
 
 
 def login():
-    """ورود به SafeVault"""
+    """Authenticate existing vaults and upgrade legacy password hashes."""
+    with database_session() as (connection, cursor):
+        cursor.execute("SELECT id, password_hash, salt FROM vault ORDER BY id LIMIT 1")
+        result = cursor.fetchone()
+        if not result:
+            print("❌ Master Password هنوز ساخته نشده.")
+            return None
 
-    connection = connect_db()
-    cursor = connection.cursor()
+        vault_id, stored_hash, salt_hex = result
+        salt = bytes.fromhex(salt_hex)
+        password = getpass("Master Password: ")
+        if not verify_password(password, stored_hash, salt):
+            print("\n❌ Master Password اشتباه است.")
+            return None
 
-    cursor.execute(
-        """
-        SELECT password_hash, salt
-        FROM vault
-        LIMIT 1
-        """
-    )
-
-    result = cursor.fetchone()
-
-    cursor.close()
-    connection.close()
-
-    # اگر Master Password وجود نداشت
-    if not result:
-
-        print("❌ Master Password هنوز ساخته نشده.")
-
-        return None
-
-    # Hash و Salt را از دیتابیس می‌گیریم
-    stored_hash = result[0]
-    salt_hex = result[1]
-
-    print("\n🔐 ورود به SafeVault")
-    print("--------------------")
-
-    password = input("Master Password: ")
-
-    # بررسی Master Password
-    if not verify_password(password, stored_hash):
-
-        print("\n❌ Master Password اشتباه است.")
-
-        return None
-
-    # تبدیل Salt از Hex به Bytes
-    salt = bytes.fromhex(salt_hex)
-
-    # ساخت Encryption Key
-    encryption_key = generate_key_from_password(
-        password,
-        salt
-    )
+        upgraded_hash = hash_password(password, salt)
+        if stored_hash != upgraded_hash:
+            cursor.execute(
+                "UPDATE vault SET password_hash = %s WHERE id = %s AND password_hash = %s",
+                (upgraded_hash, vault_id, stored_hash),
+            )
+            connection.commit()
 
     print("\n✅ ورود موفق بود!")
-
-    return encryption_key
+    return generate_key_from_password(password, salt)
 
 
 def add_password(encryption_key):
@@ -166,7 +84,7 @@ def add_password(encryption_key):
     username = input("Username / Email (اختیاری): ").strip()
 
     # Password - اجباری
-    password = input("Password: ").strip()
+    password = getpass("Password: ")
 
     if not password:
         print("❌ Password نمی‌تواند خالی باشد.")
@@ -190,42 +108,17 @@ def add_password(encryption_key):
     )
 
     try:
-
-        connection = connect_db()
-        cursor = connection.cursor()
-
-        cursor.execute(
-            """
-            INSERT INTO passwords
-            (
-                title,
-                username,
-                encrypted_password,
-                website,
-                notes
+        with database_session() as (connection, cursor):
+            cursor.execute(
+                """INSERT INTO passwords
+                (title, username, encrypted_password, website, notes)
+                VALUES (%s, %s, %s, %s, %s)""",
+                (title, username, encrypted_password, website, notes),
             )
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (
-                title,
-                username,
-                encrypted_password,
-                website,
-                notes
-            )
-        )
-
-        connection.commit()
-
-        cursor.close()
-        connection.close()
-
+            connection.commit()
         print("\n✅ Password با موفقیت ذخیره شد!")
-
     except Exception as error:
-
-        print("\n❌ خطا در ذخیره Password:")
-        print(error)
+        print(f"\n❌ خطا در ذخیره Password: {error}")
 
 
 def view_passwords():
@@ -308,15 +201,15 @@ def search_password():
 
 
 
-    connetion = None
+    connection = None
 
     cursor = None
 
 
 
     try:
-        connetion = connect_db()
-        cursor = connetion.cursor(dictionary=True)
+        connection = connect_db()
+        cursor = connection.cursor(dictionary=True)
 
 
         query = """
@@ -356,7 +249,7 @@ def search_password():
             )
             print(
                 f"Website: "
-                f"{account['username'] or 'ثبت نشده'}"
+                f"{account['website'] or 'ثبت نشده'}"
             )
             print(
                 f"Notes: "
@@ -375,14 +268,14 @@ def search_password():
             cursor.close()
 
 
-        if connetion is not None and connetion.is_connected():
-            connetion.close()
+        if connection is not None and connection.is_connected():
+            connection.close()
 
 
 
 def edit_password(encryption_key):
 
-    coonection = None
+    connection = None
     cursor = None
 
 
@@ -395,7 +288,7 @@ def edit_password(encryption_key):
 
         account_id = input("Enter the account ID you want to edit: ").strip()
 
-        if not account_id.isdigit():
+        if not account_id.isdecimal():
             print("Invalid ID. Please enter a valid numeric ID.")
             return
 
@@ -456,9 +349,10 @@ def edit_password(encryption_key):
             field,field_name = fields[choice]
 
 
-            new_value = input(
-                f"Enter the new {field_name}: "
-            ).strip()
+            if field == "encrypted_password":
+                new_value = getpass("Enter the new Password: ")
+            else:
+                new_value = input(f"Enter the new {field_name}: ").strip()
 
 
             if field in ("title","encrypted_password") and not new_value:
@@ -468,6 +362,9 @@ def edit_password(encryption_key):
             if field in ("username", "website", "notes"):
                 new_value = new_value if new_value else None
 
+
+            if field == "encrypted_password":
+                new_value = encrypt_password(new_value, encryption_key)
 
             cursor.execute(
                 f"UPDATE passwords SET {field} = %s WHERE id = %s ",
@@ -498,14 +395,14 @@ def edit_password(encryption_key):
 
 
 def delete_password():
-    connction = None
+    connection = None
     cursor = None
 
 
     try:
-        connction = connect_db()
+        connection = connect_db()
 
-        cursor = connction.cursor(dictionary=True)
+        cursor = connection.cursor(dictionary=True)
 
 
         cursor.execute(
@@ -540,8 +437,9 @@ def delete_password():
 
 
 
-        if not account_id.isdigit():\
-        print("Invalid ID. Please enter a numric ID.")
+        if not account_id.isdecimal():
+            print("Invalid ID. Please enter a numeric ID.")
+            return
 
         account_id = int(account_id)
 
@@ -584,7 +482,7 @@ def delete_password():
 
 
 
-        connction.commit()
+        connection.commit()
 
 
 
@@ -592,8 +490,8 @@ def delete_password():
 
 
     except Exception as error:
-        if connction:
-            connction.rollback()
+        if connection:
+            connection.rollback()
 
 
 
@@ -606,8 +504,8 @@ def delete_password():
             cursor.close()
 
 
-        if connction:
-            connction.close()
+        if connection:
+            connection.close()
 
 
 
@@ -620,7 +518,7 @@ def reveal_password(encryption_key):
     ).strip()
 
 
-    if not account_id.isdigit():
+    if not account_id.isdecimal():
         print("❌شناسه باید عدد باشد ")
         return
 
@@ -647,27 +545,22 @@ def reveal_password(encryption_key):
 
         account = cursor.fetchone()
 
-        if  account is None:
-            print("❌ حساب موردنظر پیدا نشد. ")
+        if account is None:
+            print("❌ حساب موردنظر پیدا نشد.")
+            return
 
+        title, encrypted_password = account
+        password = decrypt_password(encrypted_password, encryption_key)
+        print("\n🔓 رمز حساب")
+        print("=" * 35)
+        print(f"Service: {title}")
+        print(f"Password: {password}")
+        print("=" * 35)
 
-            titel, encrypt_password = account
-
-            # رمز گشایی فقط برای حساب انتخاب شده 
-
-            password = decrypt_password(
-                encrypt_password,
-                encryption_key
-            )
-
-            print("\n🔓 رمز حساب ")            
-            print("=" * 35)
-            print(f"Service: {titel}")
-            print(f"Password: {password}")            
-            print("=" * 35)
-
+    except InvalidToken:
+        print("❌ رمز ذخیره‌شده معتبر نیست یا کلید آن متفاوت است؛ رمز حساب را دوباره ویرایش و ذخیره کنید.")
     except Exception as error:
-        print(f"❌ خطا  در بازیابی رمز: {error}")    
+        print(f"❌ خطا در بازیابی رمز: {error}")
 
 
     finally:
@@ -705,55 +598,6 @@ def main():
     if not encryption_key:
         print("❌ ورود ناموفق بود ")
         return
-
-
-
-    # ساخت Master Password
-    if setup_master_password():
-
-        print("\n🚀 Vault آماده استفاده است!")
-
-        # برای اولین ورود باید کلید بسازیم 
-        password = input("\nبرای ورود دوباره Master Password را وارد کن: ")
-
-        connection = connect_db()
-        cursor = connection.cursor()
-
-
-        cursor.execute(
-            "SELECT password_hash, salt FROM vault LIMIT 1 "
-        )
-
-
-        result = cursor.fetchone()
-
-        cursor.close()
-        connection.close()
-
-
-
-
-        stored_hash = result[0]
-        salt = bytes.fromhex(result[1])
-
-
-
-        encryption_key = generate_key_from_password(
-            password,
-            salt
-
-        )
-    else:
-        # ورود
-        encryption_key = login()
-
-        if not encryption_key:
-            print("❌ ورود ناموفق بود.")
-            return
-
-
-
-
 
 
 
@@ -816,5 +660,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (KeyboardInterrupt, EOFError):
+        print("\nSafeVault closed.")
+    except Exception as error:
+        raise SystemExit(f"SafeVault could not continue: {error}")
 

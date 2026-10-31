@@ -1,110 +1,51 @@
-import hashlib
+"""Password verification and encryption for the local vault."""
 import base64
+import hashlib
+import hmac
 import os
-
 
 from cryptography.fernet import Fernet
 
 
+PBKDF2_ITERATIONS = 600_000
 
 
-# بخش Master Password 
+def hash_password(password, salt):
+    """Store a salted verifier distinct from the vault's encryption key."""
+    return hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), b"safevault:verify:" + salt,
+        PBKDF2_ITERATIONS, dklen=32,
+    ).hex()
 
 
-def hash_password(password):
-    # تبدیل Master Password به Hash
-    return hashlib.sha256(
-        password.encode("utf-8")
-    ).hexdigest()
-
-
-
-
-
-
-def verify_password(password, stored_hash):
-
-    # برسی درست بودن Master Password
-
-    return hash_password(password) == stored_hash
-
-
-
-
-# ساخت Encryption Key
+def verify_password(password, stored_hash, salt):
+    if hmac.compare_digest(hash_password(password, salt), stored_hash):
+        return True
+    # Read compatibility only. Login replaces legacy SHA-256 verifiers.
+    legacy_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(legacy_hash, stored_hash)
 
 
 def generate_key_from_password(password, salt):
-
-    # ساخت کلید رمزنگاری از Master Password
-
+    # Preserve this derivation so existing vaults remain readable.
     key = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        salt,
-        600_000,
-        dklen=32
+        "sha256", password.encode("utf-8"), salt,
+        PBKDF2_ITERATIONS, dklen=32,
     )
-
     return base64.urlsafe_b64encode(key)
 
 
-
-
-
-
-
-
-
-
-# بخش encryption
-
-
 def generate_key():
-    # ساخت یک  کلید رمز نگاری جدید 
     return Fernet.generate_key()
 
 
 def encrypt_password(password, key):
-
-    # رمزنگاری password
-    
-    cipher = Fernet(key)
-
-    encrypted = cipher.encrypt(
-        password.encode("utf-8")
-    )
-    return encrypted.decode("utf-8")
+    return Fernet(key).encrypt(password.encode("utf-8")).decode("utf-8")
 
 
+def decrypt_password(encrypted_password, key):
+    return Fernet(key).decrypt(encrypted_password.encode("utf-8")).decode("utf-8")
 
-
-# Decryption
-
-
-def decrypt_password(encrypt_password, key):
-    # رمزگشایی password
-
-    cipher = Fernet(key)
-
-
-    decrypted = cipher.decrypt(
-        encrypt_password.encode("utf-8")
-    )
-
-    return decrypted.decode("utf-8")
-
-
-
-
-# ساخت salt
 
 def generate_salt():
-
-    # ساخت salt تصادفی 
-
     return os.urandom(16)
-
-
-
-
