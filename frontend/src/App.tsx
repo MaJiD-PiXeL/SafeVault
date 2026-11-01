@@ -12,7 +12,6 @@ import {
   KeyRound,
   LayoutDashboard,
   LockKeyhole,
-  LogOut,
   Plus,
   Search,
   Settings2,
@@ -28,8 +27,16 @@ import {
 
 import './index.css'
 import { checkHealth } from './api'
+import AccountPanel from './AccountPanel'
+import { useAccount } from './useAccount'
+import { useVault } from './vault/useVault'
+import type { UnlockedEntry } from './vault/format'
+import VaultAccess from './vault/VaultAccess'
+import EntryDialog from './vault/EntryDialog'
+import GeneratorPanel from './vault/GeneratorPanel'
+import SecurityPanel from './vault/SecurityPanel'
 
-const accounts = [
+const demoAccounts = [
   {
     name: 'GitHub',
     category: 'Developer Tools',
@@ -70,24 +77,37 @@ const accounts = [
 
 const navigation = [
   { label: 'Overview', icon: LayoutDashboard },
-  { label: 'All Passwords', icon: KeyRound, count: String(accounts.length) },
+  { label: 'All Passwords', icon: KeyRound, count: String(demoAccounts.length) },
   { label: 'Favorites', icon: Star },
   { label: 'Secure Notes', icon: FolderLock },
   { label: 'Payment Cards', icon: CreditCard },
 ]
 
 function App() {
+  const account = useAccount()
+  const vault = useVault(account.user?.id ?? null, account.status === 'ready')
   const [activePage, setActivePage] = useState('Overview')
   const [search, setSearch] = useState('')
   const [showAddDialog, setShowAddDialog] = useState(false)
+  const [editingEntry, setEditingEntry] = useState<UnlockedEntry | null>(null)
+  const [category, setCategory] = useState('')
   const [apiStatus, setApiStatus] = useState('Checking...')
   const [apiError, setApiError] = useState(false)
   const dialogRef = useRef<HTMLDialogElement>(null)
 
   useEffect(() => {
-    if (showAddDialog) dialogRef.current?.showModal()
+    if (showAddDialog && !vault.unlocked) dialogRef.current?.showModal()
     else dialogRef.current?.close()
-  }, [showAddDialog])
+  }, [showAddDialog, vault.unlocked])
+
+  useEffect(() => vault.controller.subscribe(() => {
+    if (!vault.controller.getSnapshot().unlocked) {
+      setSearch('')
+      setCategory('')
+      setEditingEntry(null)
+      setShowAddDialog(false)
+    }
+  }), [vault.controller])
 
   useEffect(() => {
     let cancelled = false
@@ -119,15 +139,30 @@ function App() {
     }
   }, [])
 
+  const accounts: (typeof demoAccounts[number] & { id: string; record?: UnlockedEntry })[] = account.user
+    ? vault.entries.map((entry) => ({ id: entry.envelope.id, record: entry, name: entry.data.title,
+      username: entry.data.username, domain: entry.data.website, category: entry.data.category,
+      favorite: entry.data.favorite, icon: entry.data.title.slice(0, 2).toUpperCase(), color: '#60a5fa' }))
+    : demoAccounts.map((entry) => ({ ...entry, id: entry.name }))
+
+  function addItem() {
+    if (account.user && !vault.unlocked) { setActivePage('All Passwords'); return }
+    setEditingEntry(null)
+    setShowAddDialog(true)
+  }
+
   const filteredAccounts = accounts.filter((account) => {
     const query = search.trim().toLowerCase()
 
     if (activePage === 'Favorites' && !account.favorite) return false
+    if (category && account.category !== category) return false
 
     return (
       account.name.toLowerCase().includes(query) ||
       account.username.toLowerCase().includes(query) ||
-      account.domain.toLowerCase().includes(query)
+      account.domain.toLowerCase().includes(query) ||
+      account.category.toLowerCase().includes(query) ||
+      (account.record?.data.notes.toLowerCase().includes(query) ?? false)
     )
   })
 
@@ -181,7 +216,7 @@ function App() {
 
                   {item.count && (
                     <span className="text-[10px] text-slate-600">
-                      {item.count}
+                      {account.user ? (vault.unlocked ? String(accounts.length) : '—') : item.count}
                     </span>
                   )}
                 </button>
@@ -235,7 +270,7 @@ function App() {
               <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/10">
                 <div className="h-full w-4/5 rounded-full bg-blue-500" />
               </div>
-              <span className="text-[9px] text-slate-500">Ready</span>
+              <span className="text-[9px] text-slate-500">{account.user ? (vault.unlocked ? 'Unlocked' : 'Locked') : 'Preview'}</span>
             </div>
           </div>
 
@@ -253,26 +288,27 @@ function App() {
             </div>
 
             <div className="min-w-0 flex-1">
-              <div className="text-[11px] font-medium">VELNAR User</div>
+              <div className="truncate text-[11px] font-medium">{account.user?.username ?? 'Guest preview'}</div>
               <div className="mt-1 text-[10px] text-slate-600">
                 Personal Vault
               </div>
             </div>
 
-            <LogOut size={15} className="text-slate-600" />
+            <button aria-label="Account settings" onClick={() => setActivePage('Account')} className="rounded-lg p-2 text-slate-400 hover:bg-white/5"><Settings2 size={15} /></button>
           </div>
         </div>
       </aside>
 
       <main className="min-h-screen lg:ml-[250px]">
         <header className="sticky top-0 z-10 flex h-[76px] items-center justify-between border-b border-white/[0.06] bg-[#08090c]/90 px-5 backdrop-blur-xl sm:px-8 xl:px-11">
-          <div className="flex items-center gap-2 text-[11px] text-slate-600">
-            <span>VELNAR</span>
-            <span>/</span>
-            <span className="text-slate-300">{activePage}</span>
+          <div className="flex min-w-0 items-center gap-1 text-[11px] text-slate-600 sm:gap-2">
+            <span className="shrink-0">VELNAR</span>
+            <span className="shrink-0">/</span>
+            <span className="truncate text-slate-300">{activePage}</span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            <button onClick={() => setActivePage('Account')} className="max-w-24 truncate rounded-lg border border-blue-400/20 px-3 py-2 text-xs text-blue-300 sm:max-w-32">{account.user?.username ?? 'Sign in'}</button>
             <div
                 role="status"
                 aria-live="polite"
@@ -313,7 +349,7 @@ function App() {
               <CircleHelp size={16} />
             </button>
 
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-blue-400/20 bg-blue-500/10 text-blue-300">
+            <div className="hidden h-9 w-9 items-center justify-center rounded-xl border border-blue-400/20 bg-blue-500/10 text-blue-300 sm:flex">
               <Fingerprint size={17} />
             </div>
           </div>
@@ -323,7 +359,7 @@ function App() {
           <label className="mb-6 block text-sm text-slate-400 lg:hidden">
             Navigate
             <select value={activePage} onChange={(event) => setActivePage(event.target.value)} className="ml-3 rounded-lg border border-white/10 bg-[#0c0f15] p-2">
-              {[...navigation.map((item) => item.label), 'Security Center', 'Password Generator', 'Settings', 'Help'].map((page) => <option key={page}>{page}</option>)}
+              {[...navigation.map((item) => item.label), 'Security Center', 'Password Generator', 'Account', 'Settings', 'Help'].map((page) => <option key={page}>{page}</option>)}
             </select>
           </label>
           <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
@@ -343,7 +379,7 @@ function App() {
             </div>
 
             <button
-              onClick={() => setShowAddDialog(true)}
+              onClick={addItem}
               className="flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-[12px] font-medium text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-500"
             >
               <Plus size={16} />
@@ -351,13 +387,19 @@ function App() {
             </button>
           </div>
 
-          {['Overview', 'All Passwords', 'Favorites'].includes(activePage) ? <>
+          {['Overview', 'All Passwords', 'Favorites'].includes(activePage) ? (account.user && !vault.unlocked ?
+            <VaultAccess key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} /> : <>
+          {account.user && <div className="mt-7 rounded-xl border border-blue-400/15 bg-blue-500/5 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3"><span className="text-xs text-blue-200">Vault unlocked on this device</span><div className="flex gap-3"><button disabled={vault.busy} onClick={() => void vault.controller.refresh()} className="text-xs text-slate-300 disabled:opacity-50">Refresh entries</button><button onClick={vault.controller.lock} className="rounded-lg border border-blue-400/25 px-3 py-2 text-xs text-blue-200">Lock vault</button></div></div>
+            {vault.error && <p role="alert" className="mt-3 text-sm text-red-300">{vault.error}</p>}
+            <p className="mt-3 text-[11px] text-amber-200/70">Independent security audit pending. Use test credentials.</p>
+          </div>}
           <div className="mt-9 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard
               icon={<Vault size={17} />}
               label="Total Items"
               value={String(accounts.length)}
-              detail="Demo items"
+              detail={account.user ? 'Encrypted entries' : 'Demo items'}
               trend={<ArrowUpRight size={14} />}
             />
 
@@ -380,8 +422,8 @@ function App() {
             <StatCard
               icon={<LockKeyhole size={17} />}
               label="Vault Status"
-              value="Locked"
-              detail="Demo interface only"
+              value={vault.unlocked ? 'Unlocked' : 'Preview'}
+              detail={vault.unlocked ? 'Client-side encryption active' : 'Demo interface only'}
               trend={<ShieldCheck size={14} />}
             />
           </div>
@@ -394,11 +436,12 @@ function App() {
                     {activePage === 'Overview' ? 'Recent Items' : activePage}
                   </h2>
                   <p className="mt-1.5 text-[10px] text-slate-600">
-                    Your most recently accessed accounts
+                    {account.user ? 'Your most recently updated entries' : 'Sample accounts'}
                   </p>
                 </div>
 
                 <div className="flex gap-2">
+                  <select aria-label="Filter category" value={category} onChange={(event) => setCategory(event.target.value)} className="min-w-0 max-w-32 rounded-lg border border-white/10 bg-[#0c0f15] px-2 text-[11px] text-slate-300"><option value="">All categories</option>{[...new Set(accounts.map((item) => item.category).filter(Boolean))].sort().map((value) => <option key={value} value={value}>{value}</option>)}</select>
                   <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-white/[0.07] bg-black/20 px-3 sm:w-52">
                     <Search size={14} className="shrink-0 text-slate-600" />
 
@@ -430,7 +473,7 @@ function App() {
               <div className="divide-y divide-white/[0.045]">
                 {filteredAccounts.map((account) => (
                   <div
-                    key={account.name}
+                    key={account.id}
                     className="grid grid-cols-1 gap-3 px-5 py-4 transition hover:bg-white/[0.018] sm:grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(0,1fr)_35px] sm:items-center sm:gap-4 sm:px-6"
                   >
                     <div className="flex min-w-0 items-center gap-3">
@@ -482,10 +525,11 @@ function App() {
                     </div>
 
                     <button
-                      aria-label={`More options for ${account.name}`}
-                      disabled
-                      title="Item actions are unavailable in this interface preview"
-                      className="hidden h-8 w-8 cursor-not-allowed items-center justify-center rounded-lg text-slate-600 opacity-50 sm:flex"
+                      aria-label={`Edit ${account.name}`}
+                      disabled={!account.record || vault.busy}
+                      onClick={() => { if (account.record) { setEditingEntry(account.record); setShowAddDialog(true) } }}
+                      title={account.record ? 'Open encrypted entry' : 'Preview item'}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <MoreHorizontal size={16} />
                     </button>
@@ -501,10 +545,10 @@ function App() {
 
               <div className="border-t border-white/[0.05] px-6 py-4">
                 <div className="flex items-center justify-between text-[10px] text-slate-600">
-                  <span>{filteredAccounts.length} demo items displayed</span>
+                  <span>{filteredAccounts.length} {account.user ? 'entries' : 'demo items'} displayed</span>
                   <span className="flex items-center gap-1.5">
                     <LockKeyhole size={11} />
-                    Interface preview
+                    {account.user ? 'Encrypted storage' : 'Interface preview'}
                   </span>
                 </div>
               </div>
@@ -561,7 +605,7 @@ function App() {
                 </div>
 
                 <button
-                  onClick={() => setShowAddDialog(true)}
+                  onClick={addItem}
                   className="mt-5 flex w-full items-center gap-3 rounded-xl border border-white/[0.07] bg-white/[0.02] p-3 text-left transition hover:border-blue-400/20 hover:bg-blue-500/[0.04]"
                 >
                   <Plus size={15} className="text-blue-400" />
@@ -593,20 +637,26 @@ function App() {
                     Privacy first
                   </div>
                   <div className="mt-1 text-[10px] leading-5 text-slate-600">
-                    Real vault data will be connected after security integration.
+                    {account.user ? 'Sensitive fields are encrypted before synchronization.' : 'Sign in to create or unlock your encrypted vault.'}
                   </div>
                 </div>
               </div>
             </div>
           </section>
-          </> : (
+          </>) : ['Account', 'Settings'].includes(activePage) ? (
+            <AccountPanel key={account.user?.id ?? 'anonymous'} user={account.user} status={account.status} onUserChange={account.acceptUser} onRefresh={account.refresh} onLock={vault.controller.lock} />
+          ) : activePage === 'Password Generator' ? (
+            <GeneratorPanel key={`${account.user?.id ?? 'guest'}:${vault.lockEpoch}`} />
+          ) : activePage === 'Security Center' ? (
+            <SecurityPanel key={`${account.user?.id ?? 'guest'}:${vault.loaded}`} controller={vault.controller} signedIn={Boolean(account.user)} />
+          ) : (
             <section className="mt-9 rounded-2xl border border-white/10 bg-[#0c0f15] p-6">
               <h2 className="text-lg font-semibold">{activePage}</h2>
               <p className="mt-3 text-sm leading-7 text-slate-400">
                 {activePage === 'Help'
-                  ? 'This interface displays sample accounts. Real passwords are managed by the Python CLI. Vault storage, authentication and security metrics are not connected to this preview.'
+                  ? 'Sign in under Account, then open All Passwords to create or unlock your encrypted vault. Search, categories and favorites are processed locally after unlocking. Guest accounts display sample items. Independent security review is pending.'
                   : activePage === 'Security Center'
-                    ? `Backend: ${apiStatus}. Vault authentication and security analysis are not connected yet.`
+                    ? `Backend: ${apiStatus}. Account: ${account.user ? 'signed in' : 'signed out'}. Client vault encryption and security analysis are pending.`
                     : `${activePage} is not available in this interface preview yet.`}
               </p>
             </section>
@@ -614,17 +664,18 @@ function App() {
 
           <footer className="mt-10 flex flex-col gap-2 border-t border-white/[0.05] py-6 text-[10px] text-slate-600 sm:flex-row sm:items-center sm:justify-between">
             <span>
-              © 2026 VELNAR. SAFEVAULT INTERFACE PREVIEW.
+              © 2026 VELNAR. SAFEVAULT {account.user ? 'DEVELOPMENT BUILD.' : 'GUEST PREVIEW.'}
             </span>
             <span className="flex items-center gap-2">
               <LockKeyhole size={12} />
-              Security integration pending
+              Independent security audit pending
             </span>
           </footer>
         </div>
       </main>
 
-          <dialog
+          {vault.unlocked && showAddDialog && <EntryDialog key={editingEntry?.envelope.id ?? 'new'} controller={vault.controller} entry={editingEntry} onClose={() => { setShowAddDialog(false); setEditingEntry(null) }} />}
+          {!vault.unlocked && <dialog
             ref={dialogRef}
             onCancel={() => setShowAddDialog(false)}
             onClose={() => setShowAddDialog(false)}
@@ -641,7 +692,7 @@ function App() {
                   Add new item
                 </h2>
                 <p className="mt-2 text-[11px] text-slate-500">
-                  Vault storage is not connected. Use the Python CLI to save and manage real passwords.
+                  This guest preview does not save data. Sign in and set up a vault to save encrypted entries.
                 </p>
               </div>
 
@@ -700,7 +751,7 @@ function App() {
                 Close Preview
               </button>
             </div>
-          </dialog>
+          </dialog>}
     </div>
   )
 }

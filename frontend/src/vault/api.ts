@@ -1,0 +1,73 @@
+import { accountApi } from '../api.ts'
+import { object, UUID, validateEnvelope, validatePreferences, validateVault, VaultDataError } from './format.ts'
+import type { EncryptedEntry, SecurityPreferences, VaultMetadata } from './format.ts'
+
+type Request = (path: string, method?: string, body?: unknown, signal?: AbortSignal) => Promise<unknown>
+function vaultPath(id: string) {
+  if (!UUID.test(id)) throw new VaultDataError()
+  return `vaults/${id}/entries`
+}
+
+export function createVaultApi(request: Request = accountApi.vaultRequest) {
+  return {
+    async vaults(signal: AbortSignal): Promise<VaultMetadata[]> {
+      const data = await request('vaults', 'GET', undefined, signal)
+      if (!object(data) || !Array.isArray(data.vaults) || data.vaults.length > 10) throw new VaultDataError()
+      const vaults = data.vaults.map(validateVault)
+      if (new Set(vaults.map((vault) => vault.id)).size !== vaults.length) throw new VaultDataError()
+      return vaults
+    },
+    async create(value: VaultMetadata, signal: AbortSignal) {
+      const vault = validateVault(value)
+      const result = validateVault(await request('vaults', 'POST', vault, signal))
+      if (JSON.stringify(result) !== JSON.stringify(vault)) throw new VaultDataError()
+      return result
+    },
+    async entries(id: string, signal: AbortSignal): Promise<EncryptedEntry[]> {
+      const entries: EncryptedEntry[] = []
+      let count = -1
+      let totalBytes = 0
+      for (let page = 1; page <= 100; page += 1) {
+        const data = await request(`${vaultPath(id)}?page=${page}`, 'GET', undefined, signal)
+        if (!object(data) || !Number.isSafeInteger(data.count) || (data.count as number) < 0 ||
+            !Array.isArray(data.results) || data.results.length > 50 || (data.next !== null && typeof data.next !== 'string')) throw new VaultDataError()
+        if ((data.count as number) > 5000) throw new VaultDataError('This vault is too large for this client.')
+        if (count !== -1 && count !== data.count) throw new VaultDataError('Vault changed during loading. Refresh and try again.')
+        count = data.count as number
+        const batch = data.results.map((item) => validateEnvelope(item, id))
+        totalBytes += batch.reduce((size, item) => size + item.ciphertext.length, 0)
+        if (totalBytes > 32 * 1024 * 1024) throw new VaultDataError('This vault is too large for this client.')
+        entries.push(...batch)
+        if (new Set(entries.map((entry) => entry.id)).size !== entries.length) throw new VaultDataError('Vault changed during loading. Refresh and try again.')
+        if (data.next === null) {
+          if (entries.length !== count) throw new VaultDataError()
+          return entries
+        }
+        // Construct our own same-origin page path; never follow response URLs.
+      }
+      throw new VaultDataError('This vault is too large for this client.')
+    },
+    async save(vaultId: string, id: string, revision: number, encrypted: { nonce: string; ciphertext: string }, signal: AbortSignal) {
+      if (!UUID.test(id)) throw new VaultDataError()
+      const { nonce, ciphertext } = encrypted
+      const data = revision === 1
+        ? await request(vaultPath(vaultId), 'POST', { id, nonce, ciphertext }, signal)
+        : await request(`${vaultPath(vaultId)}/${id}`, 'PATCH', { nonce, ciphertext, expected_revision: revision - 1 }, signal)
+      const result = validateEnvelope(data, vaultId)
+      if (result.id !== id || result.revision !== revision || result.nonce !== nonce || result.ciphertext !== ciphertext) throw new VaultDataError()
+      return result
+    },
+    async remove(entry: EncryptedEntry, signal: AbortSignal) {
+      if (!UUID.test(entry.id)) throw new VaultDataError()
+      await request(`${vaultPath(entry.vault_id)}/${entry.id}`, 'DELETE', { expected_revision: entry.revision }, signal)
+    },
+    async preferences(signal: AbortSignal) {
+      return validatePreferences(await request('security-settings', 'GET', undefined, signal))
+    },
+    async updatePreferences(value: SecurityPreferences, signal: AbortSignal) {
+      return validatePreferences(await request('security-settings', 'PATCH', validatePreferences(value), signal))
+    },
+  }
+}
+
+export type VaultApi = ReturnType<typeof createVaultApi>

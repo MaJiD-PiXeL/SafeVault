@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 from pathlib import Path
+from datetime import timedelta
 
 
 import os
@@ -29,6 +30,12 @@ load_dotenv(BASE_DIR / ".env")
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "")
 
 DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() == "true"
+ENVIRONMENT = os.getenv("DJANGO_ENV", "development").strip().lower()
+if ENVIRONMENT not in {"development", "production"}:
+    raise RuntimeError("DJANGO_ENV must be development or production")
+PRODUCTION = ENVIRONMENT == "production"
+if PRODUCTION and DEBUG:
+    raise RuntimeError("DJANGO_DEBUG must be False in production")
 
 if not SECRET_KEY:
     raise RuntimeError("DJANGO_SECRET_KEY is missing from the .env file")
@@ -52,6 +59,8 @@ INSTALLED_APPS = [
     'rest_framework',
     'vault',
     'corsheaders',
+    'accounts',
+    'axes',
 ]
 
 MIDDLEWARE = [
@@ -63,6 +72,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'axes.middleware.AxesMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -96,7 +106,16 @@ DATABASES = {
         "PASSWORD": os.getenv("DB_PASSWORD", ""),
         "HOST": os.getenv("DB_HOST", "127.0.0.1"),
         "PORT": os.getenv("DB_PORT", "5432"),
+        "OPTIONS": {"connect_timeout": 5},
     }
+}
+
+# Private by default for future DRF endpoints. Public health views remain read-only.
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    "DEFAULT_PARSER_CLASSES": ["accounts.parsers.BoundedJSONParser"],
 }
 
 
@@ -109,6 +128,7 @@ AUTH_PASSWORD_VALIDATORS = [
     },
     {
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        'OPTIONS': {'min_length': 12},
     },
     {
         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
@@ -148,7 +168,48 @@ MAILERS = {
 
 
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
+def env_list(name, default=""):
+    return [value.strip() for value in os.getenv(name, default).split(",") if value.strip()]
+
+
+DEV_ORIGINS = "" if PRODUCTION else "http://localhost:5173,http://127.0.0.1:5173"
+CORS_ALLOWED_ORIGINS = env_list("DJANGO_CORS_ALLOWED_ORIGINS", DEV_ORIGINS)
+CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS", DEV_ORIGINS)
+CSRF_FAILURE_VIEW = "accounts.security.csrf_failure"
+SESSION_ENGINE = "django.contrib.sessions.backends.db"
+SESSION_COOKIE_NAME = "velnar_session"
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SECURE = PRODUCTION
+SESSION_COOKIE_AGE = 1800
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+SESSION_SAVE_EVERY_REQUEST = False
+CSRF_COOKIE_NAME = "velnar_csrf"
+CSRF_COOKIE_HTTPONLY = True
+CSRF_COOKIE_SECURE = PRODUCTION
+CSRF_COOKIE_SAMESITE = "Lax"
+SECURE_SSL_REDIRECT = PRODUCTION
+SECURE_HSTS_SECONDS = 3600 if PRODUCTION else 0
+SECURE_REFERRER_POLICY = "same-origin"
+
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",
+    "django.contrib.auth.backends.ModelBackend",
 ]
+AXES_CLIENT_IP_CALLABLE = "accounts.security.client_ip"
+AXES_LOCKOUT_PARAMETERS = ["username", "ip_address"]
+AXES_FAILURE_LIMIT = 10
+AXES_COOLOFF_TIME = timedelta(minutes=15)
+AXES_RESET_COOL_OFF_ON_FAILURE_DURING_LOCKOUT = False
+AXES_RESET_ON_SUCCESS = True
+AXES_VERBOSE = False
+AXES_DISABLE_ACCESS_LOG = True
+AXES_ENABLE_ACCESS_FAILURE_LOG = False
+AXES_LOCKOUT_CALLABLE = "accounts.security.lockout_response"
+AXES_ALLOWED_CORS_ORIGINS = CORS_ALLOWED_ORIGINS
+AXES_ENABLE_RETRY_AFTER_HEADER = True
+
+# Extra budgets cap all requests, including malformed bodies and registrations.
+AUTH_REQUEST_LIMITS = {"login": (30, 60), "register": (5, 3600)}
+DATA_UPLOAD_MAX_MEMORY_SIZE = 128 * 1024

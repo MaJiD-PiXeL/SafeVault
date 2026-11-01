@@ -1,13 +1,19 @@
 # SafeVault
 
 The Python CLI manages encrypted passwords in MySQL. The React frontend is a
-sample interface; the Django backend currently exposes only read-only metadata
-and liveness endpoints. The frontend does not store or authenticate real vault data.
+sample vault interface; the Django backend exposes metadata, liveness,
+account authentication and session-management APIs.
+Phase 1 adds encrypted-storage models and owner-scoped persistence services;
+Phase 2 connects account sign-up/sign-in and session revocation to the frontend.
+Phase 3 adds client Argon2id/AES-GCM, authenticated encrypted-vault CRUD, local
+search/categories/favorites, the password generator and vault auto-lock.
 
 ## Setup
 
 Install Python dependencies with `python -m pip install -r requirements.txt`.
 Use the same Python environment when running the CLI and its tests.
+Install backend dependencies into its own environment with
+`backend/.venv/Scripts/python.exe -m pip install -r requirements.txt`.
 
 For the CLI, create a MySQL database named `safevault` (with `utf8mb4` encoding),
 copy the root `.env.example` to `.env`, and supply your MySQL credentials.
@@ -23,8 +29,10 @@ through the edit command; they cannot be decrypted as Fernet tokens.
 For Django, copy `backend/.env.example` to `backend/.env` if no configuration
 exists, and supply a random `DJANGO_SECRET_KEY` and your PostgreSQL credentials.
 The CLI's `MYSQL_*` configuration is separate from Django's PostgreSQL `DB_*`
-configuration. Run `python backend/manage.py migrate`, then
-`python backend/manage.py runserver`. Add deployment hostnames to
+configuration. Use the backend virtual environment consistently: the default
+`python` on this machine is a different Python installation. Run
+`backend/.venv/Scripts/python.exe -B backend/manage.py migrate`, then
+`backend/.venv/Scripts/python.exe -B backend/manage.py runserver`. Add deployment hostnames to
 `DJANGO_ALLOWED_HOSTS` when needed.
 
 For the frontend, run `npm ci` followed by `npm run dev` in `frontend`.
@@ -39,9 +47,20 @@ Run from the repository root:
 
 ```powershell
 python -m unittest discover -v
-python backend/manage.py check
-python backend/manage.py test vault --settings=config.test_settings -v 2
+backend/.venv/Scripts/python.exe -B backend/manage.py check
+backend/.venv/Scripts/python.exe -B backend/manage.py test accounts vault --settings=config.test_settings -v 2
 ```
+
+The SQLite in-memory suite skips the two PostgreSQL concurrency tests.
+To run all backend tests on PostgreSQL, use the explicit integration settings:
+
+```powershell
+backend/.venv/Scripts/python.exe -B backend/manage.py test accounts vault --settings=config.postgres_test_settings -v 2
+```
+
+This requires permission to create a PostgreSQL database. Django creates and
+removes a fresh `test_velnar_<random UUID>` database for the test run, separate
+from `safevault`. Never point the test database at an existing vault database.
 
 Run from `frontend` (Node.js 24 or later):
 
@@ -57,3 +76,29 @@ set `SAFEVAULT_TEST_MYSQL=1` and run `python -m unittest test_mysql -v`.
 
 Keep `.env`, database files, virtual environments, and generated files out of
 source control. Ignore rules do not remove files already tracked in Git.
+
+## Architecture and current scope
+
+See [the audit and phased plan](docs/project-audit.md),
+[account authentication and deployment settings](docs/authentication.md), and
+[encrypted storage v1](docs/encryption-format.md). The vault-entry schema contains
+no plaintext title, username, password, website, notes, category or favorite
+columns. Clients encrypt these fields together and search/filter locally
+after unlock. The server cannot verify encryption or GCM tags without keys;
+encoding validation alone is not proof of encryption.
+
+Open **Sign in** or **Settings** in the frontend to create an account, sign in,
+sign out, or revoke another browser's session. Use the same hostname consistently
+(for example, `127.0.0.1:5173`) so host-only cookies work through Vite's API proxy.
+The account password is separate from the vault master password. No vault or
+real password entry is created during account registration.
+
+Open **All Passwords** after signing in to create or unlock your vault. All entry
+fields are encrypted before upload. Security Center configures auto-lock, which
+is enforced in the client. See [Phase 3 implementation and limits](docs/phase3-web-vault.md).
+
+This is not a production-ready password manager: independent audit, offline
+access, recovery/key rotation and robust cross-device sync remain outstanding.
+Use synthetic test entries. Existing CLI files, Fernet data and legacy databases
+have not been migrated or removed. The local `backend/.env` remains untracked
+and ignored; its historical Git copies have not been removed.

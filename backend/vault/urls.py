@@ -1,9 +1,14 @@
 from django.urls import path
 from . import views
+from . import api_views
 
 app_name = "vault"
 
 urlpatterns = [
     path("", views.home, name="home"),
     path("health/", views.health_check, name="health"),
+    path("vaults/", api_views.VaultsView.as_view(), name="vaults"),
+    path("vaults/<uuid:vault_id>/entries/", api_views.EntriesView.as_view(), name="entries"),
+    path("vaults/<uuid:vault_id>/entries/<uuid:entry_id>/", api_views.EntryView.as_view(), name="entry"),
+    path("security-settings/", api_views.SecuritySettingsView.as_view(), name="security-settings"),
 ]
