@@ -86,3 +86,9 @@ class SettingsSerializer(StrictFields, serializers.ModelSerializer):
         if type(self.initial_data["lock_on_hidden"]) is not bool:
             raise serializers.ValidationError("A boolean is required.")
         return value
+
+
+class RestoreSerializer(StrictFields, serializers.Serializer):
+    backup_id = CanonicalUUID()
+    archive_digest = serializers.RegexField(r"^[0-9a-f]{64}$", max_length=64, trim_whitespace=False)
+    entries = EntryCreateSerializer(many=True, allow_empty=False, max_length=5000)

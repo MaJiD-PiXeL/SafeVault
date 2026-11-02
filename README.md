@@ -1,4 +1,10 @@
-# SafeVault
+# NEXORA SafeVault
+
+NEXORA's encrypted password workspace. **Beyond What Exists.**
+Brand identity follows the existing NEXORA official website: its metallic N mark,
+Manrope typography and obsidian/titanium/electric-blue palette. See
+[branding and compatibility](docs/branding.md). The legacy CLI and encrypted
+storage remain compatible with existing data.
 
 The Python CLI manages encrypted passwords in MySQL. The React frontend is a
 sample vault interface; the Django backend exposes metadata, liveness,
@@ -96,6 +102,12 @@ real password entry is created during account registration.
 Open **All Passwords** after signing in to create or unlock your vault. All entry
 fields are encrypted before upload. Security Center configures auto-lock, which
 is enforced in the client. See [Phase 3 implementation and limits](docs/phase3-web-vault.md).
+
+Open **Backups** while the vault is unlocked to prepare and download an encrypted
+snapshot with a separate backup password. To restore, choose the file, enter its
+backup password, review the local preview, then explicitly restore as new copies.
+Existing entries are preserved. Repeating the same backup in the same destination
+does not create duplicates. See [backup format and restore semantics](docs/backups.md).
 
 This is not a production-ready password manager: independent audit, offline
 access, recovery/key rotation and robust cross-device sync remain outstanding.

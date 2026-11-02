@@ -211,5 +211,5 @@ AXES_ALLOWED_CORS_ORIGINS = CORS_ALLOWED_ORIGINS
 AXES_ENABLE_RETRY_AFTER_HEADER = True
 
 # Extra budgets cap all requests, including malformed bodies and registrations.
-AUTH_REQUEST_LIMITS = {"login": (30, 60), "register": (5, 3600)}
+AUTH_REQUEST_LIMITS = {"login": (30, 60), "register": (5, 3600), "restore": (6, 3600)}
 DATA_UPLOAD_MAX_MEMORY_SIZE = 128 * 1024

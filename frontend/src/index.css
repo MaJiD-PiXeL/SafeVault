@@ -1,9 +1,28 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: Manrope;
+  src: url('/fonts/Manrope-Variable.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+}
+
+@theme {
+  --color-blue-400: #809BFF;
+  --color-blue-500: #426BFF;
+  --color-blue-600: #426BFF;
+  --color-blue-700: #3656CC;
+}
+
 :root {
-  font-family: Inter, "Segoe UI", sans-serif;
+  --brand-obsidian: #08090B;
+  --brand-titanium: #BFC3C8;
+  --brand-graphite: #25282D;
+  --brand-blue: #426BFF;
+  font-family: Manrope, "Segoe UI", sans-serif;
   color: #f1f5f9;
-  background: #08090c;
+  background: var(--brand-obsidian);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -18,19 +37,21 @@
 html,
 body,
 #root {
-  min-width: 320px;
+  min-width: 280px;
   min-height: 100%;
   margin: 0;
 }
 
 body {
   min-height: 100vh;
-  background: #08090c;
+  background: var(--brand-obsidian);
 }
 
-button,
-input {
-  font: inherit;
+@layer base {
+  button,
+  input {
+    font: inherit;
+  }
 }
 
 button {

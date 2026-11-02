@@ -4,12 +4,19 @@ import type { DeriveKey } from './crypto.ts'
 import { DEFAULT_PREFERENCES, validatePayload, VaultDataError } from './format.ts'
 import type { EntryPayload, SecurityPreferences, UnlockedEntry, VaultMetadata } from './format.ts'
 import type { VaultApi } from './api.ts'
+import { BackupError, createBackup, openBackup } from './backup.ts'
+import type { OpenedBackup } from './backup.ts'
+import type { RestoreEnvelope } from './api.ts'
 
 type Snapshot = { ownerId: number | null; loaded: boolean; busy: boolean; unlocked: boolean; error: string;
-  vaults: VaultMetadata[]; selectedId: string | null; entries: UnlockedEntry[]; preferences: SecurityPreferences; lockEpoch: number }
+  vaults: VaultMetadata[]; selectedId: string | null; entries: UnlockedEntry[]; preferences: SecurityPreferences; lockEpoch: number;
+  backupExport: { text: string; fileName: string } | null;
+  backupPreview: { exportedAt: string; count: number; titles: string[]; alreadyRestored: boolean } | null;
+  backupResult: string }
 type Operation = { signal: AbortSignal }
 const initial = (): Snapshot => ({ ownerId: null, loaded: false, busy: false, unlocked: false, error: '',
-  vaults: [], selectedId: null, entries: [], preferences: { ...DEFAULT_PREFERENCES }, lockEpoch: 0 })
+  vaults: [], selectedId: null, entries: [], preferences: { ...DEFAULT_PREFERENCES }, lockEpoch: 0,
+  backupExport: null, backupPreview: null, backupResult: '' })
 
 export class VaultController {
   #state: Snapshot = initial()
@@ -21,6 +28,8 @@ export class VaultController {
   #api: VaultApi
   #derive: DeriveKey
   #clock: () => number
+  #backupDraft: OpenedBackup | null = null
+  #backupWork = false
 
   constructor(api: VaultApi, derive: DeriveKey, clock = Date.now) { this.#api = api; this.#derive = derive; this.#clock = clock }
   getSnapshot = () => this.#state
@@ -31,7 +40,10 @@ export class VaultController {
     this.#epoch += 1
     this.#abort?.abort()
     this.#key = null
-    this.#publish({ entries: [], unlocked: false, busy: false, error: '', lockEpoch: this.#state.lockEpoch + 1 })
+    this.#backupDraft = null
+    this.#backupWork = false
+    this.#publish({ entries: [], unlocked: false, busy: false, error: '', lockEpoch: this.#state.lockEpoch + 1,
+      backupExport: null, backupPreview: null, backupResult: '' })
   }
 
   switchAccount(ownerId: number | null, enabled: boolean) {
@@ -41,23 +53,27 @@ export class VaultController {
     if (ownerId !== null && enabled) void this.load()
   }
 
-  async #run(action: (op: Operation) => Promise<{ patch: Partial<Snapshot>; key?: CryptoKey }>): Promise<boolean> {
+  async #run(action: (op: Operation) => Promise<{ patch: Partial<Snapshot>; key?: CryptoKey; backupDraft?: OpenedBackup | null }>, backupWork = false): Promise<boolean> {
     if (this.#state.busy || this.#state.ownerId === null) return false
     const epoch = ++this.#epoch
     const abort = new AbortController()
     this.#abort = abort
+    this.#backupWork = backupWork
     this.#publish({ busy: true, error: '' })
     try {
       const result = await action({ signal: abort.signal })
       if (epoch !== this.#epoch || abort.signal.aborted) return false
       if (result.key) { this.#key = result.key; this.#lastActivity = this.#clock() }
+      if (result.backupDraft !== undefined) this.#backupDraft = result.backupDraft
       this.#publish({ ...result.patch, busy: false })
       return true
     } catch (error) {
       if (epoch !== this.#epoch || abort.signal.aborted) return false
-      if (error instanceof VaultDataError || !(error instanceof ApiError) || [401, 403].includes(error.status)) this.lock()
-      this.#publish({ busy: false, error: error instanceof VaultDataError ? error.message : accountError(error) })
+      if (!(error instanceof BackupError) && (error instanceof VaultDataError || !(error instanceof ApiError) || [401, 403].includes(error.status))) this.lock()
+      this.#publish({ busy: false, error: error instanceof VaultDataError || error instanceof BackupError ? error.message : accountError(error) })
       return false
+    } finally {
+      if (epoch === this.#epoch) this.#backupWork = false
     }
   }
 
@@ -131,6 +147,69 @@ export class VaultController {
   })
 
   updatePreferences = (value: SecurityPreferences) => this.#run(async ({ signal }) => ({ patch: { preferences: await this.#api.updatePreferences(value, signal) } }))
+
+  clearBackupPreview = () => {
+    if (this.#state.busy) return
+    this.#backupDraft = null
+    this.#publish({ backupPreview: null, backupResult: '', error: '' })
+  }
+
+  cancelBackupWork = () => {
+    if (this.#backupWork) {
+      this.#epoch += 1
+      this.#abort?.abort()
+      this.#backupWork = false
+      this.#publish({ busy: false })
+    }
+    this.#backupDraft = null
+    this.#publish({ backupPreview: null, backupExport: null, backupResult: '' })
+  }
+
+  exportBackup = (password: string) => this.#run(async ({ signal }) => {
+    if (!this.#key || !this.#state.unlocked || !this.#state.selectedId) throw new BackupError('Unlock the vault before exporting.')
+    this.#publish({ backupExport: null, backupResult: '' })
+    const entries = await this.#readEntries(this.#key, this.#state.selectedId, signal)
+    const text = await createBackup(this.#state.selectedId, entries, password, this.#derive, signal)
+    return { patch: { entries, backupExport: { text, fileName: `nexora-safevault-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json` } } }
+  }, true)
+
+  prepareRestore = (text: string, password: string) => this.#run(async ({ signal }) => {
+    if (!this.#key || !this.#state.unlocked || !this.#state.selectedId) throw new BackupError('Unlock the destination vault before restoring.')
+    this.#backupDraft = null
+    this.#publish({ backupPreview: null, backupResult: '' })
+    const draft = await openBackup(text, password, this.#derive, signal)
+    const receipt = await this.#api.restoreReceipt(this.#state.selectedId, draft.backupId, signal)
+    if (receipt && (receipt.archive_digest !== draft.archiveDigest || receipt.entry_count !== draft.content.entries.length)) throw new BackupError('Backup identity conflicts with an earlier restore.')
+    return { backupDraft: draft, patch: { backupPreview: { exportedAt: draft.content.exported_at, count: draft.content.entries.length,
+      titles: draft.content.entries.slice(0, 10).map((entry) => entry.payload.title), alreadyRestored: Boolean(receipt) } } }
+  }, true)
+
+  restoreBackup = () => this.#run(async ({ signal }) => {
+    const draft = this.#backupDraft
+    const key = this.#key
+    const vaultId = this.#state.selectedId
+    if (!draft || !key || !vaultId || !this.#state.unlocked || !draft.content.entries.length) throw new BackupError('Validate a nonempty backup first.')
+    const existing = await this.#api.restoreReceipt(vaultId, draft.backupId, signal)
+    let repeated = Boolean(existing)
+    if (existing && (existing.archive_digest !== draft.archiveDigest || existing.entry_count !== draft.content.entries.length)) throw new BackupError('Backup identity conflicts with an earlier restore.')
+    if (!existing) {
+      const entries: RestoreEnvelope[] = []
+      const nonces = new Set(this.#state.entries.map((entry) => entry.envelope.nonce))
+      for (const record of draft.content.entries) {
+        signal.throwIfAborted()
+        const id = crypto.randomUUID()
+        const encrypted = await encryptEntry(key, vaultId, id, 1, record.payload)
+        if (nonces.has(encrypted.nonce)) throw new BackupError('Random nonce collision. Validate the backup again before retrying.')
+        nonces.add(encrypted.nonce)
+        entries.push({ id, ...encrypted })
+      }
+      signal.throwIfAborted()
+      repeated = (await this.#api.restore(vaultId, draft.backupId, draft.archiveDigest, entries, signal)).already_restored
+    }
+    const entries = await this.#readEntries(key, vaultId, signal)
+    return { backupDraft: null, patch: { entries, backupPreview: null,
+      backupResult: repeated ? 'This backup was already restored. No duplicate entries were added.' : `Restored ${draft.content.entries.length} entries. Existing entries were preserved.` } }
+  }, true)
 
   checkIdle = () => {
     const elapsed = this.#clock() - this.#lastActivity

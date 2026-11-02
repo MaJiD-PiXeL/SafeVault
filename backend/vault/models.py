@@ -108,3 +108,18 @@ class SecuritySettings(ValidatedModel):
             condition=models.Q(auto_lock_seconds__gte=60, auto_lock_seconds__lte=3600),
             name="settings_auto_lock_bounds",
         )]
+
+
+class RestoreReceipt(models.Model):
+    """Minimal commit receipt; no backup password, archive file or plaintext."""
+    vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name="restore_receipts")
+    backup_id = models.UUIDField()
+    archive_digest = models.CharField(max_length=64)
+    entry_count = models.PositiveIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["vault", "backup_id"], name="restore_vault_backup_unique"),
+            models.CheckConstraint(condition=models.Q(entry_count__gte=1, entry_count__lte=5000), name="restore_count_bounds"),
+        ]

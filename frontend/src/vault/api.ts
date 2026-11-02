@@ -1,8 +1,16 @@
-import { accountApi } from '../api.ts'
+import { accountApi, ApiError } from '../api.ts'
 import { object, UUID, validateEnvelope, validatePreferences, validateVault, VaultDataError } from './format.ts'
 import type { EncryptedEntry, SecurityPreferences, VaultMetadata } from './format.ts'
 
-type Request = (path: string, method?: string, body?: unknown, signal?: AbortSignal) => Promise<unknown>
+type Request = (path: string, method?: string, body?: unknown, signal?: AbortSignal, timeoutMs?: number) => Promise<unknown>
+export type RestoreReceipt = { backup_id: string; archive_digest: string; entry_count: number; already_restored: boolean }
+export type RestoreEnvelope = { id: string; nonce: string; ciphertext: string }
+function validateReceipt(value: unknown, backupId: string): RestoreReceipt {
+  if (!object(value) || value.backup_id !== backupId || typeof value.archive_digest !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(value.archive_digest) || !Number.isInteger(value.entry_count) ||
+      (value.entry_count as number) < 1 || (value.entry_count as number) > 5000 || typeof value.already_restored !== 'boolean') throw new VaultDataError()
+  return value as RestoreReceipt
+}
 function vaultPath(id: string) {
   if (!UUID.test(id)) throw new VaultDataError()
   return `vaults/${id}/entries`
@@ -66,6 +74,20 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
     },
     async updatePreferences(value: SecurityPreferences, signal: AbortSignal) {
       return validatePreferences(await request('security-settings', 'PATCH', validatePreferences(value), signal))
+    },
+    async restoreReceipt(vaultId: string, backupId: string, signal: AbortSignal) {
+      if (!UUID.test(vaultId) || !UUID.test(backupId)) throw new VaultDataError()
+      try { return validateReceipt(await request(`vaults/${vaultId}/restores/${backupId}`, 'GET', undefined, signal), backupId) }
+      catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error }
+    },
+    async restore(vaultId: string, backupId: string, archiveDigest: string, entries: RestoreEnvelope[], signal: AbortSignal) {
+      if (!UUID.test(vaultId) || !UUID.test(backupId) || !/^[0-9a-f]{64}$/.test(archiveDigest)) throw new VaultDataError()
+      const result = validateReceipt(await request(`vaults/${vaultId}/restores`, 'POST', {
+        backup_id: backupId, archive_digest: archiveDigest,
+        entries: entries.map(({ id, nonce, ciphertext }) => ({ id, nonce, ciphertext })),
+      }, signal, 60000), backupId)
+      if (result.archive_digest !== archiveDigest || result.entry_count !== entries.length) throw new VaultDataError()
+      return result
     },
   }
 }

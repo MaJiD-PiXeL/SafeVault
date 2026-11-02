@@ -1,4 +1,8 @@
-# VELNAR SAFEVAULT encrypted storage v1
+# NEXORA SafeVault encrypted storage v1
+
+The product was renamed from VELNAR. The `velnar.safevault` wire-format and AAD
+strings below are permanent v1 compatibility identifiers, not display branding.
+Do not rename them: existing vaults and backups depend on their exact bytes.
 
 Status: client encryption and authenticated vault HTTP writes are implemented
 and tested. Independent security review is pending; use synthetic test entries

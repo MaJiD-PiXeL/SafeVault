@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { ApiError } from '../src/api.ts'
 import { VaultController } from '../src/vault/controller.ts'
 import { encryptEntry, importDataKey } from '../src/vault/crypto.ts'
+import { createBackup, openBackup } from '../src/vault/backup.ts'
 
 const fixture = JSON.parse(await readFile(new URL('./fixtures/encryption-v1.json', import.meta.url), 'utf8'))
 const derive = async () => new Uint8Array(Buffer.from(fixture.wrapping_key_hex, 'hex'))
@@ -23,6 +24,8 @@ function fakeApi(overrides = {}) {
     },
     remove: async (entry) => { calls.push({ operation: 'remove', id: entry.id }) },
     updatePreferences: async (preferences) => preferences,
+    restoreReceipt: async () => null,
+    restore: async (_vaultId, backupId, archiveDigest, entries) => ({ backup_id: backupId, archive_digest: archiveDigest, entry_count: entries.length, already_restored: false }),
     ...overrides,
   }
 }
@@ -168,4 +171,89 @@ test('uncertain vault creation requires reloading metadata before another attemp
   assert.equal(await controller.create(fixture.master), false)
   assert.equal(controller.getSnapshot().loaded, false)
   assert.equal(controller.getSnapshot().unlocked, false)
+})
+
+const backupPassword = 'PUBLIC controller backup passphrase 91!'
+const makeBackup = () => createBackup(fixture.vault.id, [{ envelope: fixture.entry, data: fixture.payload }], backupPassword, derive, new AbortController().signal)
+
+test('preview decrypts locally without writing; restore re-encrypts under fresh identities', async () => {
+  const archive = await makeBackup()
+  const api = fakeApi()
+  let restored
+  api.restore = async (vaultId, backupId, digest, entries) => {
+    restored = { ...fixture.entry, ...entries[0], vault_id: vaultId, revision: 1 }
+    return { backup_id: backupId, archive_digest: digest, entry_count: entries.length, already_restored: false }
+  }
+  api.entries = async () => restored ? [fixture.entry, restored] : [fixture.entry]
+  const controller = await prepared(api)
+  await controller.unlock(fixture.master)
+  assert.equal(await controller.prepareRestore(archive, backupPassword), true)
+  assert.equal(controller.getSnapshot().backupPreview.count, 1)
+  assert.equal(api.calls.length, 0)
+  assert.equal(restored, undefined)
+  assert.equal(await controller.restoreBackup(), true)
+  assert.notEqual(restored.id, fixture.entry.id)
+  assert.notEqual(restored.nonce, fixture.entry.nonce)
+  assert.ok(!JSON.stringify(restored).includes(fixture.payload.password))
+  assert.deepEqual(controller.getSnapshot().entries[1].data, fixture.payload)
+  assert.equal(controller.getSnapshot().backupPreview, null)
+})
+
+test('corrupt preview invalidates an earlier valid draft but does not close the destination vault', async () => {
+  const controller = await prepared()
+  await controller.unlock(fixture.master)
+  await controller.prepareRestore(await makeBackup(), backupPassword)
+  assert.equal(await controller.prepareRestore('{broken', backupPassword), false)
+  assert.equal(controller.getSnapshot().unlocked, true)
+  assert.equal(controller.getSnapshot().backupPreview, null)
+  assert.equal(await controller.restoreBackup(), false)
+})
+
+test('lock erases preview, download and late backup derivation results', async () => {
+  const gate = deferred()
+  let delayed = false
+  const controller = await prepared(fakeApi(), { derive: async () => delayed ? gate.promise : derive() })
+  await controller.unlock(fixture.master)
+  await controller.prepareRestore(await makeBackup(), backupPassword)
+  assert.equal(controller.getSnapshot().backupPreview.count, 1)
+  delayed = true
+  const exporting = controller.exportBackup(backupPassword)
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  controller.lock()
+  gate.resolve(new Uint8Array(Buffer.from(fixture.wrapping_key_hex, 'hex')))
+  assert.equal(await exporting, false)
+  assert.equal(controller.getSnapshot().backupPreview, null)
+  assert.equal(controller.getSnapshot().backupExport, null)
+  assert.ok(!JSON.stringify(controller.getSnapshot()).includes(fixture.payload.title))
+})
+
+test('a committed receipt prevents duplicate writes after reload or a lost response', async () => {
+  let count = 0
+  const archive = await makeBackup()
+  const file = JSON.parse(archive)
+  const api = fakeApi({ restore: async () => { count += 1; throw new Error('must not write') } })
+  const controller = await prepared(api)
+  await controller.unlock(fixture.master)
+  await controller.prepareRestore(archive, backupPassword)
+  const opened = await openBackup(archive, backupPassword, derive, new AbortController().signal)
+  api.restoreReceipt = async () => ({ backup_id: file.encryption.id, archive_digest: opened.archiveDigest, entry_count: 1, already_restored: true })
+  assert.equal(await controller.restoreBackup(), true)
+  assert.equal(count, 0)
+  assert.match(controller.getSnapshot().backupResult, /already restored/)
+})
+
+test('leaving Backups cancels late preview work without closing the live vault', async () => {
+  const gate = deferred()
+  let delayed = false
+  const controller = await prepared(fakeApi(), { derive: async () => delayed ? gate.promise : derive() })
+  await controller.unlock(fixture.master)
+  const archive = await makeBackup()
+  delayed = true
+  const pending = controller.prepareRestore(archive, backupPassword)
+  controller.cancelBackupWork()
+  gate.resolve(new Uint8Array(Buffer.from(fixture.wrapping_key_hex, 'hex')))
+  assert.equal(await pending, false)
+  assert.equal(controller.getSnapshot().unlocked, true)
+  assert.equal(controller.getSnapshot().backupPreview, null)
+  assert.equal(controller.getSnapshot().busy, false)
 })

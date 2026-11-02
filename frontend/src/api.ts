@@ -38,7 +38,7 @@ export function createAccountApi(baseUrl = import.meta.env?.VITE_API_BASE_URL ??
   let csrfEpoch = 0
   const base = baseUrl.replace(/\/$/, '')
 
-  async function request(path: string, method = 'GET', body?: unknown, signal?: AbortSignal, namespace = 'auth') {
+  async function request(path: string, method = 'GET', body?: unknown, signal?: AbortSignal, namespace = 'auth', timeoutMs = 10000) {
     const headers: Record<string, string> = { Accept: 'application/json' }
     if (method !== 'GET') {
       if (!csrfToken) await session(signal)
@@ -48,7 +48,7 @@ export function createAccountApi(baseUrl = import.meta.env?.VITE_API_BASE_URL ??
     const [route, query] = path.split('?')
     const response = await fetch(`${base}/${namespace ? `${namespace}/` : ''}${route}/${query ? `?${query}` : ''}`, {
       method, credentials: 'include', cache: 'no-store', redirect: 'error', headers,
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
     if (response.status === 204) return null
@@ -85,9 +85,9 @@ export function createAccountApi(baseUrl = import.meta.env?.VITE_API_BASE_URL ??
 
   return {
     session,
-    async vaultRequest(path: string, method = 'GET', body?: unknown, signal?: AbortSignal) {
+    async vaultRequest(path: string, method = 'GET', body?: unknown, signal?: AbortSignal, timeoutMs = 10000) {
       if (!/^[a-z0-9/-]+(?:\?page=[1-9][0-9]{0,2})?$/.test(path)) throw new ApiError('Invalid API path.', 400)
-      return request(path, method, body, signal, '')
+      return request(path, method, body, signal, '', Math.min(60000, Math.max(1000, timeoutMs)))
     },
     async signIn(username: string, password: string) {
       return acceptSession(await request('login', 'POST', { username, password }))

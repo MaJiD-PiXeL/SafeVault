@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import { createVaultApi } from '../src/vault/api.ts'
+import { ApiError } from '../src/api.ts'
 const fixture = JSON.parse(await readFile(new URL('./fixtures/encryption-v1.json', import.meta.url), 'utf8'))
 
 test('vault writes select only transport fields and include optimistic revisions', async () => {
@@ -48,4 +49,21 @@ test('unsupported security preferences and changed creation envelopes are reject
   const signal = new AbortController().signal
   await assert.rejects(createVaultApi(async () => ({ auto_lock_seconds: 0, lock_on_hidden: false })).preferences(signal))
   await assert.rejects(createVaultApi(async () => ({ ...fixture.vault, id: crypto.randomUUID() })).create(fixture.vault, signal))
+})
+
+test('restore sends only newly encrypted envelopes and validates its commit receipt', async () => {
+  const id = crypto.randomUUID()
+  const calls = []
+  const api = createVaultApi(async (...args) => {
+    calls.push(args)
+    return { backup_id: id, archive_digest: 'a'.repeat(64), entry_count: 1, already_restored: false }
+  })
+  const signal = new AbortController().signal
+  await api.restore(fixture.vault.id, id, 'a'.repeat(64), [{ ...fixture.entry, password: 'must not leave client' }], signal)
+  assert.equal(calls[0][4], 60000)
+  assert.deepEqual(Object.keys(calls[0][2]).sort(), ['archive_digest', 'backup_id', 'entries'])
+  assert.deepEqual(Object.keys(calls[0][2].entries[0]).sort(), ['ciphertext', 'id', 'nonce'])
+  assert.ok(!JSON.stringify(calls).includes('must not leave client'))
+  assert.equal(await createVaultApi(async () => { throw new ApiError('missing', 404) }).restoreReceipt(fixture.vault.id, id, signal), null)
+  await assert.rejects(createVaultApi(async () => { throw new ApiError('denied', 403) }).restoreReceipt(fixture.vault.id, id, signal))
 })

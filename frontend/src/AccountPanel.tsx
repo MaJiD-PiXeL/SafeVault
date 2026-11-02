@@ -70,7 +70,7 @@ export default function AccountPanel({ user, status, onUserChange, onRefresh, on
     <section aria-labelledby="account-heading" className="mt-9 max-w-3xl rounded-2xl border border-white/10 bg-[#0c0f15] p-6 sm:p-8">
       <div className="flex items-center gap-3">
         <ShieldCheck className="text-blue-400" size={22} />
-        <h2 id="account-heading" className="text-lg font-semibold">Your VELNAR account</h2>
+        <h2 id="account-heading" className="text-lg font-semibold">Your NEXORA account</h2>
       </div>
       {status === 'checking' && <p role="status" className="mt-5 text-sm text-slate-400">Checking your session...</p>}
       {status === 'offline' && <div className="mt-5 text-sm text-amber-300" role="status">Account service is unavailable. <button className="ml-2 underline" onClick={() => void onRefresh()}>Retry connection</button></div>}

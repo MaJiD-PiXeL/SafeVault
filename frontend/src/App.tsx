@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 
 import './index.css'
+import { BRAND } from './brand'
 import { checkHealth } from './api'
 import AccountPanel from './AccountPanel'
 import { useAccount } from './useAccount'
@@ -35,12 +36,13 @@ import VaultAccess from './vault/VaultAccess'
 import EntryDialog from './vault/EntryDialog'
 import GeneratorPanel from './vault/GeneratorPanel'
 import SecurityPanel from './vault/SecurityPanel'
+import BackupPanel from './vault/BackupPanel'
 
 const demoAccounts = [
   {
     name: 'GitHub',
     category: 'Developer Tools',
-    username: 'majid@example.com',
+    username: 'demo@example.com',
     domain: 'github.com',
     color: '#f1f5f9',
     icon: 'GH',
@@ -49,7 +51,7 @@ const demoAccounts = [
   {
     name: 'Google',
     category: 'Email & Identity',
-    username: 'majid@example.com',
+    username: 'demo@example.com',
     domain: 'accounts.google.com',
     color: '#60a5fa',
     icon: 'G',
@@ -58,7 +60,7 @@ const demoAccounts = [
   {
     name: 'Instagram',
     category: 'Social Media',
-    username: '@velnar',
+    username: '@example',
     domain: 'instagram.com',
     color: '#c084fc',
     icon: 'IG',
@@ -67,7 +69,7 @@ const demoAccounts = [
   {
     name: 'Discord',
     category: 'Communication',
-    username: 'velnar_dev',
+    username: 'demo_developer',
     domain: 'discord.com',
     color: '#818cf8',
     icon: 'D',
@@ -167,23 +169,23 @@ function App() {
   })
 
   return (
-    <div className="min-h-screen bg-[#08090c] text-slate-100">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-[250px] flex-col border-r border-white/[0.07] bg-[#0a0c11] lg:flex">
-        <div className="flex h-[88px] items-center gap-3 px-7">
-          <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl border border-blue-400/20 bg-[#101a30]">
+    <div className="min-h-screen bg-[#08090B] text-slate-100">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-[250px] flex-col overflow-y-auto border-r border-white/[0.07] bg-[#0a0c11] lg:flex">
+        <div className="flex h-[88px] shrink-0 items-center gap-3 px-7">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-white/[0.025] p-1">
             <img
-              src="/velnar_logo.png"
-              alt="VELNAR"
+              src={BRAND.mark}
+              alt={`${BRAND.name} mark`}
               className="h-full w-full object-contain"
             />
           </div>
 
           <div>
             <div className="text-[15px] font-bold tracking-[0.22em]">
-              VELNAR
+              {BRAND.name}
             </div>
-            <div className="mt-1 text-[9px] tracking-[0.25em] text-slate-500">
-              SECURE ECOSYSTEM
+            <div className="mt-1 text-[9px] tracking-[0.06em] text-slate-400">
+              {BRAND.tagline}
             </div>
           </div>
         </div>
@@ -253,6 +255,7 @@ function App() {
             <Sparkles size={16} strokeWidth={1.7} />
             Password Generator
           </button>
+          <button onClick={() => setActivePage('Backups')} className={`mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-[12px] transition ${activePage === 'Backups' ? 'bg-blue-500/10 text-blue-300' : 'text-slate-500 hover:bg-white/[0.035] hover:text-slate-200'}`}><FolderLock size={16} />Backups</button>
         </div>
 
         <div className="mt-auto p-5">
@@ -284,7 +287,7 @@ function App() {
 
           <div className="mt-4 flex items-center gap-3 border-t border-white/[0.06] pt-5">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-[11px] font-semibold text-blue-300">
-              V
+              N
             </div>
 
             <div className="min-w-0 flex-1">
@@ -300,9 +303,9 @@ function App() {
       </aside>
 
       <main className="min-h-screen lg:ml-[250px]">
-        <header className="sticky top-0 z-10 flex h-[76px] items-center justify-between border-b border-white/[0.06] bg-[#08090c]/90 px-5 backdrop-blur-xl sm:px-8 xl:px-11">
+        <header className="sticky top-0 z-10 flex h-[76px] items-center justify-between border-b border-white/[0.06] bg-[#08090B]/90 px-5 backdrop-blur-xl sm:px-8 xl:px-11">
           <div className="flex min-w-0 items-center gap-1 text-[11px] text-slate-600 sm:gap-2">
-            <span className="shrink-0">VELNAR</span>
+            <span className="shrink-0">{BRAND.name}</span>
             <span className="shrink-0">/</span>
             <span className="truncate text-slate-300">{activePage}</span>
           </div>
@@ -359,7 +362,7 @@ function App() {
           <label className="mb-6 block text-sm text-slate-400 lg:hidden">
             Navigate
             <select value={activePage} onChange={(event) => setActivePage(event.target.value)} className="ml-3 rounded-lg border border-white/10 bg-[#0c0f15] p-2">
-              {[...navigation.map((item) => item.label), 'Security Center', 'Password Generator', 'Account', 'Settings', 'Help'].map((page) => <option key={page}>{page}</option>)}
+              {[...navigation.map((item) => item.label), 'Security Center', 'Password Generator', 'Backups', 'Account', 'Settings', 'Help'].map((page) => <option key={page}>{page}</option>)}
             </select>
           </label>
           <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
@@ -645,6 +648,8 @@ function App() {
           </section>
           </>) : ['Account', 'Settings'].includes(activePage) ? (
             <AccountPanel key={account.user?.id ?? 'anonymous'} user={account.user} status={account.status} onUserChange={account.acceptUser} onRefresh={account.refresh} onLock={vault.controller.lock} />
+          ) : activePage === 'Backups' ? (
+            !account.user ? <section className="mt-9 rounded-2xl border border-white/10 bg-[#0c0f15] p-6"><h2 className="text-lg font-semibold">Encrypted backups</h2><p className="mt-3 text-sm text-slate-400">Sign in and unlock a vault to export or restore an encrypted backup.</p></section> : !vault.unlocked ? <VaultAccess key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} /> : <BackupPanel key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} />
           ) : activePage === 'Password Generator' ? (
             <GeneratorPanel key={`${account.user?.id ?? 'guest'}:${vault.lockEpoch}`} />
           ) : activePage === 'Security Center' ? (
@@ -664,7 +669,7 @@ function App() {
 
           <footer className="mt-10 flex flex-col gap-2 border-t border-white/[0.05] py-6 text-[10px] text-slate-600 sm:flex-row sm:items-center sm:justify-between">
             <span>
-              © 2026 VELNAR. SAFEVAULT {account.user ? 'DEVELOPMENT BUILD.' : 'GUEST PREVIEW.'}
+              © 2026 {BRAND.fullName}. {account.user ? 'DEVELOPMENT BUILD.' : 'GUEST PREVIEW.'}
             </span>
             <span className="flex items-center gap-2">
               <LockKeyhole size={12} />

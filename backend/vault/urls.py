@@ -11,4 +11,6 @@ urlpatterns = [
     path("vaults/<uuid:vault_id>/entries/", api_views.EntriesView.as_view(), name="entries"),
     path("vaults/<uuid:vault_id>/entries/<uuid:entry_id>/", api_views.EntryView.as_view(), name="entry"),
     path("security-settings/", api_views.SecuritySettingsView.as_view(), name="security-settings"),
+    path("vaults/<uuid:vault_id>/restores/", api_views.RestoreView.as_view(), name="restore"),
+    path("vaults/<uuid:vault_id>/restores/<uuid:backup_id>/", api_views.RestoreReceiptView.as_view(), name="restore-receipt"),
 ]

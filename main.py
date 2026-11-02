@@ -606,7 +606,7 @@ def main():
 
     while True:
         print("\n" + "=" * 40)
-        print("          🔐SafeVault Menu ")
+        print("          🔐NEXORA SafeVault Menu ")
         print("=" * 40)
 
         print("1. ➕ Add Password")
@@ -650,7 +650,7 @@ def main():
         
 
         elif choice == "8":
-            print("SafeVault closed. Goodbye!")
+            print("NEXORA SafeVault closed. Goodbye!")
             break
             
 
@@ -663,7 +663,7 @@ if __name__ == "__main__":
     try:
         main()
     except (KeyboardInterrupt, EOFError):
-        print("\nSafeVault closed.")
+        print("\nNEXORA SafeVault closed.")
     except Exception as error:
-        raise SystemExit(f"SafeVault could not continue: {error}")
+        raise SystemExit(f"NEXORA SafeVault could not continue: {error}")
 
