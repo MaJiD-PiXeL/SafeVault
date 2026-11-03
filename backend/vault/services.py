@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Count, Sum
 from django.db.models.functions import Length
+from django.utils import timezone
 
 from .models import NonceReservation, RestoreReceipt, SecuritySettings, Vault, VaultEntry
 
@@ -46,10 +47,30 @@ def create_vault(*, user, vault_id, kdf_salt, wrap_nonce, wrapped_key):
     return vault
 
 
-def list_entries(*, user, vault_id):
+def list_entries(*, user, vault_id, state="active"):
     _require_user(user)
     vault = Vault.objects.for_user(user).get(pk=vault_id)
-    return VaultEntry.objects.for_user(user).filter(vault=vault).order_by("-updated_at", "id")
+    entries = VaultEntry.objects.for_user(user).filter(vault=vault)
+    if state == "active":
+        entries = entries.filter(deleted_at__isnull=True)
+    elif state == "trash":
+        entries = entries.filter(deleted_at__isnull=False)
+    elif state != "all":
+        raise ValidationError("Invalid entry state.")
+    return entries.order_by("-updated_at", "id")
+
+
+def _locked_entry(user, entry_id):
+    # All writers take the vault lock first, including capacity checks and restores.
+    reference = VaultEntry.objects.for_user(user).only("vault_id").get(pk=entry_id)
+    Vault.objects.for_user(user).select_for_update().get(pk=reference.vault_id)
+    return VaultEntry.objects.for_user(user).select_for_update().get(pk=entry_id)
+
+
+def _check_versions(entry, expected_revision, expected_state_version):
+    if (type(expected_revision) is not int or expected_revision != entry.revision
+            or type(expected_state_version) is not int or expected_state_version != entry.state_version):
+        raise RevisionConflict("The entry changed. Refresh before trying again.")
 
 
 @transaction.atomic
@@ -68,11 +89,12 @@ def create_entry(*, user, vault_id, entry_id, nonce, ciphertext):
 
 
 @transaction.atomic
-def update_entry(*, user, entry_id, expected_revision, nonce, ciphertext):
+def update_entry(*, user, entry_id, expected_revision, nonce, ciphertext, expected_state_version=1):
     _require_user(user)
-    entry = VaultEntry.objects.for_user(user).select_for_update().get(pk=entry_id)
-    if type(expected_revision) is not int or expected_revision != entry.revision:
-        raise RevisionConflict("The entry changed. Reload it before saving.")
+    entry = _locked_entry(user, entry_id)
+    _check_versions(entry, expected_revision, expected_state_version)
+    if entry.deleted_at is not None:
+        raise RevisionConflict("Restore the entry before editing it.")
     entry.nonce = nonce
     entry.ciphertext = ciphertext
     entry.revision += 1
@@ -87,11 +109,40 @@ def update_entry(*, user, entry_id, expected_revision, nonce, ciphertext):
 
 
 @transaction.atomic
-def delete_entry(*, user, entry_id, expected_revision):
+def delete_entry(*, user, entry_id, expected_revision, expected_state_version=1):
+    """Move an active encrypted entry to Trash; content and its AAD stay unchanged."""
     _require_user(user)
-    entry = VaultEntry.objects.for_user(user).select_for_update().get(pk=entry_id)
-    if type(expected_revision) is not int or expected_revision != entry.revision:
-        raise RevisionConflict("The entry changed. Reload it before deleting.")
+    entry = _locked_entry(user, entry_id)
+    _check_versions(entry, expected_revision, expected_state_version)
+    if entry.deleted_at is not None or entry.state_version >= 2147483647:
+        raise RevisionConflict("The entry state changed. Refresh before trying again.")
+    entry.deleted_at = timezone.now()
+    entry.state_version += 1
+    entry.save(update_fields=["deleted_at", "state_version", "updated_at"])
+    return entry
+
+
+@transaction.atomic
+def restore_entry(*, user, entry_id, expected_revision, expected_state_version):
+    _require_user(user)
+    entry = _locked_entry(user, entry_id)
+    _check_versions(entry, expected_revision, expected_state_version)
+    if entry.deleted_at is None or entry.state_version >= 2147483647:
+        raise RevisionConflict("The entry state changed. Refresh before trying again.")
+    entry.deleted_at = None
+    entry.state_version += 1
+    entry.save(update_fields=["deleted_at", "state_version", "updated_at"])
+    return entry
+
+
+@transaction.atomic
+def purge_entry(*, user, entry_id, expected_revision, expected_state_version):
+    _require_user(user)
+    entry = _locked_entry(user, entry_id)
+    _check_versions(entry, expected_revision, expected_state_version)
+    if entry.deleted_at is None:
+        raise RevisionConflict("Only entries in Trash can be permanently deleted.")
+    # Nonce reservations and backup restore receipts deliberately survive purge.
     entry.delete()
 
 

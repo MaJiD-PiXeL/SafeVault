@@ -9,13 +9,13 @@ import type { OpenedBackup } from './backup.ts'
 import type { RestoreEnvelope } from './api.ts'
 
 type Snapshot = { ownerId: number | null; loaded: boolean; busy: boolean; unlocked: boolean; error: string;
-  vaults: VaultMetadata[]; selectedId: string | null; entries: UnlockedEntry[]; preferences: SecurityPreferences; lockEpoch: number;
+  vaults: VaultMetadata[]; selectedId: string | null; entries: UnlockedEntry[]; trash: UnlockedEntry[]; preferences: SecurityPreferences; lockEpoch: number;
   backupExport: { text: string; fileName: string } | null;
   backupPreview: { exportedAt: string; count: number; titles: string[]; alreadyRestored: boolean } | null;
   backupResult: string }
 type Operation = { signal: AbortSignal }
 const initial = (): Snapshot => ({ ownerId: null, loaded: false, busy: false, unlocked: false, error: '',
-  vaults: [], selectedId: null, entries: [], preferences: { ...DEFAULT_PREFERENCES }, lockEpoch: 0,
+  vaults: [], selectedId: null, entries: [], trash: [], preferences: { ...DEFAULT_PREFERENCES }, lockEpoch: 0,
   backupExport: null, backupPreview: null, backupResult: '' })
 
 export class VaultController {
@@ -42,7 +42,7 @@ export class VaultController {
     this.#key = null
     this.#backupDraft = null
     this.#backupWork = false
-    this.#publish({ entries: [], unlocked: false, busy: false, error: '', lockEpoch: this.#state.lockEpoch + 1,
+    this.#publish({ entries: [], trash: [], unlocked: false, busy: false, error: '', lockEpoch: this.#state.lockEpoch + 1,
       backupExport: null, backupPreview: null, backupResult: '' })
   }
 
@@ -98,7 +98,7 @@ export class VaultController {
     let saved: VaultMetadata
     try { saved = await this.#api.create(vault, signal) }
     catch (error) { if (!signal.aborted) this.#publish({ loaded: false }); throw error }
-    return { key, patch: { vaults: [saved], selectedId: saved.id, unlocked: true, entries: [], loaded: true } }
+    return { key, patch: { vaults: [saved], selectedId: saved.id, unlocked: true, entries: [], trash: [], loaded: true } }
   })
 
   async #readEntries(key: CryptoKey, id: string, signal: AbortSignal) {
@@ -108,42 +108,63 @@ export class VaultController {
       signal.throwIfAborted()
       entries.push({ envelope, data: await decryptEntry(key, envelope) })
     }
-    return entries
+    return { entries: entries.filter((entry) => entry.envelope.deleted_at === null),
+      trash: entries.filter((entry) => entry.envelope.deleted_at !== null) }
   }
 
   unlock = (master: string) => this.#run(async ({ signal }) => {
     const metadata = this.#state.vaults.find((vault) => vault.id === this.#state.selectedId)
     if (!metadata) throw new VaultDataError('Load and select your vault first.')
     const key = await unlockEncryptedVault(metadata, master, this.#derive, signal)
-    const entries = await this.#readEntries(key, metadata.id, signal)
-    return { key, patch: { entries, unlocked: true } }
+    const snapshot = await this.#readEntries(key, metadata.id, signal)
+    return { key, patch: { ...snapshot, unlocked: true } }
   })
 
   refresh = () => this.#run(async ({ signal }) => {
     if (!this.#key || !this.#state.selectedId) throw new VaultDataError('Unlock your vault first.')
-    return { patch: { entries: await this.#readEntries(this.#key, this.#state.selectedId, signal) } }
+    return { patch: await this.#readEntries(this.#key, this.#state.selectedId, signal) }
   })
 
-  save = (value: EntryPayload, existingId?: string, expectedRevision?: number) => this.#run(async ({ signal }) => {
+  save = (value: EntryPayload, existingId?: string, expectedRevision?: number, expectedStateVersion?: number) => this.#run(async ({ signal }) => {
     if (!this.#key || !this.#state.unlocked || !this.#state.selectedId) throw new VaultDataError('Unlock your vault first.')
     const data = validatePayload(value)
     const existing = existingId ? this.#state.entries.find((entry) => entry.envelope.id === existingId) : undefined
     if (existingId && !existing) throw new VaultDataError('Refresh before editing this entry.')
     if (existing && expectedRevision !== existing.envelope.revision) throw new ApiError('Entry changed. Close the editor and refresh before saving.', 409)
+    if (existing && expectedStateVersion !== existing.envelope.state_version) throw new ApiError('Entry moved to or from Trash. Close the editor and refresh before saving.', 409)
     const id = existingId ?? crypto.randomUUID()
     const revision = existing ? existing.envelope.revision + 1 : 1
     const encrypted = await encryptEntry(this.#key, this.#state.selectedId, id, revision, data)
     signal.throwIfAborted()
-    const envelope = await this.#api.save(this.#state.selectedId, id, revision, encrypted, signal)
+    const envelope = await this.#api.save(this.#state.selectedId, id, revision, encrypted, signal, existing?.envelope.state_version)
     return { patch: { entries: [{ envelope, data }, ...this.#state.entries.filter((entry) => entry.envelope.id !== id)] } }
   })
 
-  remove = (id: string, expectedRevision: number) => this.#run(async ({ signal }) => {
+  remove = (id: string, expectedRevision: number, expectedStateVersion: number) => this.#run(async ({ signal }) => {
     const entry = this.#state.entries.find((item) => item.envelope.id === id)
     if (!this.#key || !entry) throw new VaultDataError('Unlock and refresh before deleting.')
     if (expectedRevision !== entry.envelope.revision) throw new ApiError('Entry changed. Close the editor and refresh before deleting.', 409)
-    await this.#api.remove(entry.envelope, signal)
-    return { patch: { entries: this.#state.entries.filter((item) => item.envelope.id !== id) } }
+    if (expectedStateVersion !== entry.envelope.state_version) throw new ApiError('Entry state changed. Close the editor and refresh before moving it to Trash.', 409)
+    const envelope = await this.#api.remove(entry.envelope, signal)
+    return { patch: { entries: this.#state.entries.filter((item) => item.envelope.id !== id),
+      trash: [{ envelope, data: entry.data }, ...this.#state.trash], backupExport: null } }
+  })
+
+  restoreEntry = (id: string, expectedRevision: number, expectedStateVersion: number) => this.#run(async ({ signal }) => {
+    const entry = this.#state.trash.find((item) => item.envelope.id === id)
+    if (!this.#key || !entry) throw new VaultDataError('Unlock and refresh before restoring.')
+    if (expectedRevision !== entry.envelope.revision || expectedStateVersion !== entry.envelope.state_version) throw new ApiError('Entry changed. Refresh Trash before restoring.', 409)
+    const envelope = await this.#api.restoreEntry(entry.envelope, signal)
+    return { patch: { entries: [{ envelope, data: entry.data }, ...this.#state.entries],
+      trash: this.#state.trash.filter((item) => item.envelope.id !== id), backupExport: null } }
+  })
+
+  purge = (id: string, expectedRevision: number, expectedStateVersion: number) => this.#run(async ({ signal }) => {
+    const entry = this.#state.trash.find((item) => item.envelope.id === id)
+    if (!this.#key || !entry) throw new VaultDataError('Unlock and refresh before permanently deleting.')
+    if (expectedRevision !== entry.envelope.revision || expectedStateVersion !== entry.envelope.state_version) throw new ApiError('Entry changed. Refresh Trash before permanently deleting.', 409)
+    await this.#api.purge(entry.envelope, signal)
+    return { patch: { trash: this.#state.trash.filter((item) => item.envelope.id !== id), backupExport: null } }
   })
 
   updatePreferences = (value: SecurityPreferences) => this.#run(async ({ signal }) => ({ patch: { preferences: await this.#api.updatePreferences(value, signal) } }))
@@ -168,9 +189,9 @@ export class VaultController {
   exportBackup = (password: string) => this.#run(async ({ signal }) => {
     if (!this.#key || !this.#state.unlocked || !this.#state.selectedId) throw new BackupError('Unlock the vault before exporting.')
     this.#publish({ backupExport: null, backupResult: '' })
-    const entries = await this.#readEntries(this.#key, this.#state.selectedId, signal)
-    const text = await createBackup(this.#state.selectedId, entries, password, this.#derive, signal)
-    return { patch: { entries, backupExport: { text, fileName: `nexora-safevault-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json` } } }
+    const snapshot = await this.#readEntries(this.#key, this.#state.selectedId, signal)
+    const text = await createBackup(this.#state.selectedId, snapshot.entries, password, this.#derive, signal)
+    return { patch: { ...snapshot, backupExport: { text, fileName: `nexora-safevault-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json` } } }
   }, true)
 
   prepareRestore = (text: string, password: string) => this.#run(async ({ signal }) => {
@@ -194,7 +215,7 @@ export class VaultController {
     if (existing && (existing.archive_digest !== draft.archiveDigest || existing.entry_count !== draft.content.entries.length)) throw new BackupError('Backup identity conflicts with an earlier restore.')
     if (!existing) {
       const entries: RestoreEnvelope[] = []
-      const nonces = new Set(this.#state.entries.map((entry) => entry.envelope.nonce))
+      const nonces = new Set([...this.#state.entries, ...this.#state.trash].map((entry) => entry.envelope.nonce))
       for (const record of draft.content.entries) {
         signal.throwIfAborted()
         const id = crypto.randomUUID()
@@ -206,8 +227,8 @@ export class VaultController {
       signal.throwIfAborted()
       repeated = (await this.#api.restore(vaultId, draft.backupId, draft.archiveDigest, entries, signal)).already_restored
     }
-    const entries = await this.#readEntries(key, vaultId, signal)
-    return { backupDraft: null, patch: { entries, backupPreview: null,
+    const snapshot = await this.#readEntries(key, vaultId, signal)
+    return { backupDraft: null, patch: { ...snapshot, backupPreview: null,
       backupResult: repeated ? 'This backup was already restored. No duplicate entries were added.' : `Restored ${draft.content.entries.length} entries. Existing entries were preserved.` } }
   }, true)
 

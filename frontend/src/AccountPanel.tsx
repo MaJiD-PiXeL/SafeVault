@@ -67,7 +67,7 @@ export default function AccountPanel({ user, status, onUserChange, onRefresh, on
   }
 
   return (
-    <section aria-labelledby="account-heading" className="mt-9 max-w-3xl rounded-2xl border border-white/10 bg-[#0c0f15] p-6 sm:p-8">
+    <section aria-labelledby="account-heading" className="mt-9 max-w-3xl rounded-2xl border border-white/10 bg-vault-surface p-6 sm:p-8">
       <div className="flex items-center gap-3">
         <ShieldCheck className="text-blue-400" size={22} />
         <h2 id="account-heading" className="text-lg font-semibold">Your NEXORA account</h2>
@@ -106,7 +106,7 @@ export default function AccountPanel({ user, status, onUserChange, onRefresh, on
             <input required type="password" name="confirmation" autoComplete="new-password" maxLength={1024} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} className="mt-2 block w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm outline-none focus:border-blue-400" />
           </label>}
           <p className="text-xs leading-6 text-slate-500">{mode === 'register' ? 'Use at least 12 characters and a password different from your vault master password. ' : ''}This form sends your account password to the account service.</p>
-          <button disabled={busy || status !== 'ready'} className="w-full rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Please wait...' : mode === 'register' ? 'Create account' : 'Sign in'}</button>
+          <button disabled={busy || status !== 'ready'} className="w-full rounded-xl brand-primary px-5 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Please wait...' : mode === 'register' ? 'Create account' : 'Sign in'}</button>
         </form>
       </>}
       <p className="mt-7 border-t border-white/10 pt-5 text-xs leading-6 text-slate-500">Open All Passwords to create or unlock your encrypted vault. Guest accounts display sample items only.</p>

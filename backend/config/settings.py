@@ -165,6 +165,20 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+if PRODUCTION:
+    MAILERS = {
+        'default': {
+            'BACKEND': 'django.core.mail.backends.smtp.EmailBackend',
+            'OPTIONS': {
+                'host': os.getenv('DJANGO_SMTP_HOST', ''),
+                'port': int(os.getenv('DJANGO_SMTP_PORT', '587')),
+                'username': os.getenv('DJANGO_SMTP_USERNAME', ''),
+                'password': os.getenv('DJANGO_SMTP_PASSWORD', ''),
+                'use_tls': True,
+                'timeout': 10,
+            },
+        },
+    }
 
 
 
@@ -191,6 +205,8 @@ CSRF_COOKIE_SECURE = PRODUCTION
 CSRF_COOKIE_SAMESITE = "Lax"
 SECURE_SSL_REDIRECT = PRODUCTION
 SECURE_HSTS_SECONDS = 3600 if PRODUCTION else 0
+SECURE_HSTS_INCLUDE_SUBDOMAINS = PRODUCTION and os.getenv("DJANGO_HSTS_INCLUDE_SUBDOMAINS", "False").lower() == "true"
+SECURE_HSTS_PRELOAD = PRODUCTION and os.getenv("DJANGO_HSTS_PRELOAD", "False").lower() == "true"
 SECURE_REFERRER_POLICY = "same-origin"
 
 AUTHENTICATION_BACKENDS = [

@@ -68,16 +68,16 @@ export default function BackupPanel({ controller }: { controller: VaultControlle
     <div><h2 id="backup-heading" className="text-xl font-semibold">Encrypted backups</h2><p className="mt-3 text-sm leading-7 text-slate-400">Backups use their own password and fresh encryption keys. File contents and passwords stay on this device.</p></div>
     {(error || state.error) && <p role="alert" className="rounded-xl border border-red-400/20 bg-red-400/5 p-4 text-sm text-red-300">{error || state.error}</p>}
     {state.backupResult && <p role="status" className="rounded-xl border border-blue-400/20 p-4 text-sm text-blue-200">{state.backupResult}</p>}
-    <div className="rounded-2xl border border-white/10 bg-[#0c0f15] p-6">
-      <h3 className="font-semibold">Export current vault</h3><p className="mt-2 text-xs leading-6 text-slate-400">The export refreshes and authenticates all entries first. Keep the backup password safe; you need it to restore this file.</p>
+    <div className="rounded-2xl border border-white/10 bg-vault-surface p-6">
+      <h3 className="font-semibold">Export current vault</h3><p className="mt-2 text-xs leading-6 text-slate-400">The export refreshes and authenticates the vault first and includes active entries only. Trash is excluded; restore deleted entries before backing them up. Keep the backup password safe; you need it to restore this file.</p>
       <form onSubmit={(event) => void prepareExport(event)} className="mt-5 max-w-md space-y-4">
         <label className="block text-xs text-slate-300">New backup password<input required type="password" autoComplete="off" minLength={12} maxLength={1024} disabled={state.busy} value={exportPassword} onChange={(event) => setExportPassword(event.target.value)} className={input} /></label>
         <label className="block text-xs text-slate-300">Confirm backup password<input required type="password" autoComplete="off" maxLength={1024} disabled={state.busy} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} className={input} /></label>
-        <button disabled={state.busy} className="rounded-xl bg-blue-600 px-4 py-3 text-sm disabled:opacity-50">{state.busy ? 'Working...' : 'Prepare encrypted backup'}</button>
+        <button disabled={state.busy} className="rounded-xl brand-primary px-4 py-3 text-sm disabled:opacity-50">{state.busy ? 'Working...' : 'Prepare encrypted backup'}</button>
       </form>
       {download && <a href={download.url} download={download.name} className="mt-5 inline-block rounded-xl border border-blue-400/30 px-4 py-3 text-sm text-blue-300">Download encrypted backup</a>}
     </div>
-    <div className="rounded-2xl border border-white/10 bg-[#0c0f15] p-6">
+    <div className="rounded-2xl border border-white/10 bg-vault-surface p-6">
       <h3 className="font-semibold">Restore into this vault</h3><p className="mt-2 text-xs leading-6 text-slate-400">Choose a backup and validate it locally. Restoring adds new copies with fresh identities; existing entries are preserved. The same file is restored only once per destination vault.</p>
       <form onSubmit={(event) => void preview(event)} className="mt-5 max-w-md space-y-4">
         <label className="block text-xs text-slate-300">Encrypted backup file<input required type="file" accept=".json,application/json" disabled={busy} onChange={(event) => { readGeneration.current += 1; setFile(event.target.files?.[0] ?? null); setImportPassword(''); setError(''); controller.clearBackupPreview() }} className={input} /></label>
@@ -89,7 +89,7 @@ export default function BackupPanel({ controller }: { controller: VaultControlle
         <p className="mt-2 text-xs text-slate-400">Snapshot created {new Date(state.backupPreview.exportedAt).toLocaleString('en-US')}</p>
         <ul className="mt-3 space-y-2 text-sm text-slate-300">{state.backupPreview.titles.map((title, index) => <li key={index} className="break-words">{title}</li>)}</ul>
         {state.backupPreview.count > 10 && <p className="mt-3 text-xs text-slate-500">Showing the first 10 entry titles.</p>}
-        {state.backupPreview.alreadyRestored ? <p role="status" className="mt-4 text-sm text-blue-200">This backup has already been restored into this vault. No duplicates will be added.</p> : state.backupPreview.count === 0 ? <p className="mt-4 text-sm text-slate-400">This valid backup contains no entries.</p> : <button disabled={state.busy} onClick={() => void controller.restoreBackup()} className="mt-5 rounded-xl bg-blue-600 px-4 py-3 text-sm disabled:opacity-50">{state.busy ? 'Restoring...' : `Restore ${state.backupPreview.count} entries as new copies`}</button>}
+        {state.backupPreview.alreadyRestored ? <p role="status" className="mt-4 text-sm text-blue-200">This backup has already been restored into this vault. No duplicates will be added.</p> : state.backupPreview.count === 0 ? <p className="mt-4 text-sm text-slate-400">This valid backup contains no entries.</p> : <button disabled={state.busy} onClick={() => void controller.restoreBackup()} className="mt-5 rounded-xl brand-primary px-4 py-3 text-sm disabled:opacity-50">{state.busy ? 'Restoring...' : `Restore ${state.backupPreview.count} entries as new copies`}</button>}
       </div>}
     </div>
     <p className="text-xs leading-6 text-amber-200/70">Independent security audit pending. Use test credentials. A backup contains a snapshot, not your account or sessions.</p>

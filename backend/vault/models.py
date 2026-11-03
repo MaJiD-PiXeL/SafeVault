@@ -70,6 +70,8 @@ class VaultEntry(ValidatedModel):
     nonce = models.CharField(max_length=16, validators=[Base64Bytes(12, 12)])
     ciphertext = models.TextField(validators=[Base64Bytes(17, 65552)])
     revision = models.PositiveIntegerField(default=1, validators=[MinValueValidator(1)])
+    state_version = models.PositiveIntegerField(default=1, validators=[MinValueValidator(1), MaxValueValidator(2147483647)])
+    deleted_at = models.DateTimeField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -79,6 +81,7 @@ class VaultEntry(ValidatedModel):
         indexes = [models.Index(fields=["vault", "-updated_at", "id"], name="entry_vault_updated_idx")]
         constraints = [
             models.CheckConstraint(condition=models.Q(revision__gte=1), name="entry_revision_positive"),
+            models.CheckConstraint(condition=models.Q(state_version__gte=1, state_version__lte=2147483647), name="entry_state_version_bounds"),
             models.CheckConstraint(condition=~models.Q(ciphertext=""), name="entry_ciphertext_not_empty"),
             models.UniqueConstraint(fields=["vault", "nonce"], name="entry_vault_nonce_unique"),
         ]

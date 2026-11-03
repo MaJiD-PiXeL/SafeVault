@@ -10,7 +10,8 @@ from accounts.security import limit_requests
 from .models import RestoreReceipt, SecuritySettings, Vault, VaultEntry
 from .serializers import (EntryCreateSerializer, EntryDeleteSerializer, EntrySerializer,
                           EntryUpdateSerializer, RestoreSerializer, SettingsSerializer, VaultSerializer)
-from .services import NonceConflict, RevisionConflict, create_entry, create_vault, delete_entry, list_entries, restore_entries, update_entry
+from .services import (NonceConflict, RevisionConflict, create_entry, create_vault,
+                       delete_entry, list_entries, purge_entry, restore_entry, restore_entries, update_entry)
 
 
 class Conflict(APIException):
@@ -19,6 +20,9 @@ class Conflict(APIException):
 
 
 class VaultAPIView(AccountAPIView):
+    def owned_entry(self, request, vault_id, entry_id):
+        return VaultEntry.objects.for_user(request.user).get(pk=entry_id, vault_id=vault_id)
+
     def handle_exception(self, exc):
         if isinstance(exc, (Vault.DoesNotExist, VaultEntry.DoesNotExist)):
             exc = NotFound("Vault item not found.")
@@ -49,7 +53,7 @@ class EntryPagination(PageNumberPagination):
 
 class EntriesView(VaultAPIView):
     def get(self, request, vault_id):
-        entries = list_entries(user=request.user, vault_id=vault_id)
+        entries = list_entries(user=request.user, vault_id=vault_id, state=request.query_params.get("state", "active"))
         paginator = EntryPagination()
         page = paginator.paginate_queryset(entries, request)
         return paginator.get_paginated_response(EntrySerializer(page, many=True).data)
@@ -66,9 +70,6 @@ class EntriesView(VaultAPIView):
 
 
 class EntryView(VaultAPIView):
-    def owned_entry(self, request, vault_id, entry_id):
-        return VaultEntry.objects.for_user(request.user).get(pk=entry_id, vault_id=vault_id)
-
     def get(self, request, vault_id, entry_id):
         return Response(EntrySerializer(self.owned_entry(request, vault_id, entry_id)).data)
 
@@ -83,7 +84,25 @@ class EntryView(VaultAPIView):
         self.owned_entry(request, vault_id, entry_id)
         serializer = EntryDeleteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        delete_entry(user=request.user, entry_id=entry_id, **serializer.validated_data)
+        entry = delete_entry(user=request.user, entry_id=entry_id, **serializer.validated_data)
+        return Response(EntrySerializer(entry).data)
+
+
+class EntryRestoreView(VaultAPIView):
+    def post(self, request, vault_id, entry_id):
+        self.owned_entry(request, vault_id, entry_id)
+        serializer = EntryDeleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        entry = restore_entry(user=request.user, entry_id=entry_id, **serializer.validated_data)
+        return Response(EntrySerializer(entry).data)
+
+
+class EntryPurgeView(VaultAPIView):
+    def delete(self, request, vault_id, entry_id):
+        self.owned_entry(request, vault_id, entry_id)
+        serializer = EntryDeleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        purge_entry(user=request.user, entry_id=entry_id, **serializer.validated_data)
         return Response(status=204)
 
 

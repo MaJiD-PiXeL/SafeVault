@@ -22,7 +22,7 @@ function fakeApi(overrides = {}) {
       calls.push({ operation: 'save', vaultId, id, revision, encrypted })
       return { ...fixture.entry, ...encrypted, id, vault_id: vaultId, revision }
     },
-    remove: async (entry) => { calls.push({ operation: 'remove', id: entry.id }) },
+    remove: async (entry) => { calls.push({ operation: 'remove', id: entry.id }); return { ...entry, state_version: entry.state_version + 1, deleted_at: new Date().toISOString() } },
     updatePreferences: async (preferences) => preferences,
     restoreReceipt: async () => null,
     restore: async (_vaultId, backupId, archiveDigest, entries) => ({ backup_id: backupId, archive_digest: archiveDigest, entry_count: entries.length, already_restored: false }),
@@ -119,10 +119,10 @@ test('auth loss locks immediately while an edit conflict preserves the current u
   let status = 409
   const controller = await prepared(fakeApi({ save: async () => { throw new ApiError('Refresh before saving.', status) } }))
   await controller.unlock(fixture.master)
-  assert.equal(await controller.save(fixture.payload, fixture.entry.id, 1), false)
+  assert.equal(await controller.save(fixture.payload, fixture.entry.id, 1, 1), false)
   assert.equal(controller.getSnapshot().unlocked, true)
   status = 403
-  assert.equal(await controller.save(fixture.payload, fixture.entry.id, 1), false)
+  assert.equal(await controller.save(fixture.payload, fixture.entry.id, 1, 1), false)
   assert.equal(controller.getSnapshot().unlocked, false)
   assert.deepEqual(controller.getSnapshot().entries, [])
 })
@@ -137,8 +137,8 @@ test('stale editor versions cannot overwrite or delete data refreshed from anoth
   await controller.unlock(fixture.master)
   envelopes = [{ ...fixture.entry, ...encrypted, revision: 2 }]
   await controller.refresh()
-  assert.equal(await controller.save(fixture.payload, fixture.entry.id, 1), false)
-  assert.equal(await controller.remove(fixture.entry.id, 1), false)
+  assert.equal(await controller.save(fixture.payload, fixture.entry.id, 1, 1), false)
+  assert.equal(await controller.remove(fixture.entry.id, 1, 1), false)
   assert.equal(api.calls.length, 0)
   assert.equal(controller.getSnapshot().entries[0].data.title, 'Newer device version')
 })
@@ -147,11 +147,11 @@ test('successful edits use encrypted payloads and fresh revisions; removal clear
   const api = fakeApi()
   const controller = await prepared(api)
   await controller.unlock(fixture.master)
-  assert.equal(await controller.save({ ...fixture.payload, favorite: false }, fixture.entry.id, 1), true)
+  assert.equal(await controller.save({ ...fixture.payload, favorite: false }, fixture.entry.id, 1, 1), true)
   assert.equal(api.calls[0].revision, 2)
   assert.ok(!JSON.stringify(api.calls).includes(fixture.payload.password))
   assert.equal(controller.getSnapshot().entries[0].data.favorite, false)
-  assert.equal(await controller.remove(fixture.entry.id, 2), true)
+  assert.equal(await controller.remove(fixture.entry.id, 2, 1), true)
   assert.deepEqual(controller.getSnapshot().entries, [])
 })
 

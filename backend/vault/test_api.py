@@ -27,6 +27,8 @@ class EncryptedVaultAPITests(TestCase):
         self.path = f"/api/vaults/{self.vault['id']}/entries/"
 
     def write(self, method, path, data):
+        if "expected_revision" in data:
+            data = {"expected_state_version": 1, **data}
         return getattr(self.client, method)(path, data, content_type="application/json", HTTP_X_CSRFTOKEN=self.token)
 
     def add(self, **overrides):
@@ -46,7 +48,7 @@ class EncryptedVaultAPITests(TestCase):
         self.assertEqual(updated.json()["revision"], 2)
         self.assertEqual(self.write("patch", detail, {"nonce": row["nonce"], "ciphertext": row["ciphertext"], "expected_revision": 1}).status_code, 409)
         self.assertEqual(self.write("delete", detail, {"expected_revision": 1}).status_code, 409)
-        self.assertEqual(self.write("delete", detail, {"expected_revision": 2}).status_code, 204)
+        self.assertEqual(self.write("delete", detail, {"expected_revision": 2}).status_code, 200)
         self.assertEqual(self.client.get(self.path).json()["count"], 0)
         self.assertEqual(NonceReservation.objects.count(), 2)
         self.assertEqual(self.add().status_code, 409)

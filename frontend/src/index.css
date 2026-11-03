@@ -9,19 +9,35 @@
 }
 
 @theme {
+  --color-slate-50: #FAFAFA;
+  --color-slate-100: #F2F2F3;
+  --color-slate-200: #DFE0E2;
+  --color-slate-300: #BFC3C8;
+  --color-slate-400: #A0A4AA;
+  --color-slate-500: #8A8F97;
+  --color-slate-600: #737984;
+  --color-slate-700: #454A53;
+  --color-slate-800: #25282D;
+  --color-slate-900: #15171B;
+  --color-slate-950: #08090B;
   --color-blue-400: #809BFF;
   --color-blue-500: #426BFF;
   --color-blue-600: #426BFF;
   --color-blue-700: #3656CC;
+  --color-vault-canvas: #08090B;
+  --color-vault-surface: #101114;
+  --color-vault-raised: #181A1E;
+  --color-vault-graphite: #25282D;
 }
 
 :root {
   --brand-obsidian: #08090B;
+  --brand-white: #FFFFFF;
   --brand-titanium: #BFC3C8;
   --brand-graphite: #25282D;
   --brand-blue: #426BFF;
   font-family: Manrope, "Segoe UI", sans-serif;
-  color: #f1f5f9;
+  color: #F2F2F3;
   background: var(--brand-obsidian);
 
   font-synthesis: none;
@@ -56,4 +72,46 @@ body {
 
 button {
   cursor: pointer;
+}
+
+.brand-primary {
+  border: 1px solid var(--brand-white);
+  background: var(--brand-white);
+  color: var(--brand-obsidian);
+  transition: background-color 180ms, border-color 180ms;
+}
+
+.brand-primary:hover:not(:disabled) {
+  border-color: var(--brand-titanium);
+  background: #DFE0E2;
+}
+
+.brand-primary:disabled {
+  cursor: not-allowed;
+}
+
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 4px;
+}
+
+.nav-selected {
+  border: 1px solid rgb(191 195 200 / 16%);
+  background: rgb(191 195 200 / 7%);
+  color: var(--brand-white);
+}
+
+.nav-selected svg {
+  color: var(--brand-blue);
+}
+
+.workspace-banner {
+  background: linear-gradient(115deg, #181A1E, #101114 65%, #0D0E11);
+  border: 1px solid rgb(191 195 200 / 12%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-primary {
+    transition: none;
+  }
 }

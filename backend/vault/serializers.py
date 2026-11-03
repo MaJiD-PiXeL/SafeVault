@@ -60,18 +60,20 @@ class EntryCreateSerializer(StrictFields, serializers.Serializer):
 
 class EntryUpdateSerializer(StrictFields, serializers.Serializer):
     expected_revision = StrictInteger(min_value=1, max_value=2147483646)
+    expected_state_version = StrictInteger(min_value=1, max_value=2147483647)
     nonce = EncodedBytes(12, 12)
     ciphertext = EncodedBytes(17, 65552)
 
 
 class EntryDeleteSerializer(StrictFields, serializers.Serializer):
     expected_revision = StrictInteger(min_value=1, max_value=2147483647)
+    expected_state_version = StrictInteger(min_value=1, max_value=2147483647)
 
 
 class EntrySerializer(serializers.ModelSerializer):
     class Meta:
         model = VaultEntry
-        fields = ["id", "vault_id", "nonce", "ciphertext", "revision", "created_at", "updated_at"]
+        fields = ["id", "vault_id", "nonce", "ciphertext", "revision", "state_version", "deleted_at", "created_at", "updated_at"]
 
 
 class SettingsSerializer(StrictFields, serializers.ModelSerializer):

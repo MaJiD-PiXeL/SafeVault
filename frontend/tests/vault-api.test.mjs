@@ -10,7 +10,7 @@ test('vault writes select only transport fields and include optimistic revisions
   const api = createVaultApi(async (...args) => {
     calls.push(args)
     if (args[0] === 'vaults') return fixture.vault
-    if (args[1] === 'DELETE') return null
+    if (args[1] === 'DELETE') return { ...fixture.entry, state_version: 2, deleted_at: new Date().toISOString() }
     return { ...fixture.entry, revision: args[1] === 'PATCH' ? 2 : 1 }
   })
   const signal = new AbortController().signal
@@ -21,7 +21,7 @@ test('vault writes select only transport fields and include optimistic revisions
   await api.save(fixture.vault.id, fixture.entry.id, 2, fixture.entry, signal)
   assert.equal(calls[2][2].expected_revision, 1)
   await api.remove(fixture.entry, signal)
-  assert.deepEqual(calls[3][2], { expected_revision: 1 })
+  assert.deepEqual(calls[3][2], { expected_revision: 1, expected_state_version: 1 })
 })
 
 test('entry pagination constructs local routes instead of following server-supplied links', async () => {
@@ -33,7 +33,7 @@ test('entry pagination constructs local routes instead of following server-suppl
       : { count: 2, results: [second], next: null }
   })
   assert.equal((await api.entries(fixture.vault.id, new AbortController().signal)).length, 2)
-  assert.deepEqual(paths, [1, 2].map((page) => `vaults/${fixture.vault.id}/entries?page=${page}`))
+  assert.deepEqual(paths, [1, 2].map((page) => `vaults/${fixture.vault.id}/entries?state=all&page=${page}`))
 })
 
 test('pagination detects incomplete snapshots, duplicates, wrong vaults and allocation limits', async () => {

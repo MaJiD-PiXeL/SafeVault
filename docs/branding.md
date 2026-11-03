@@ -14,6 +14,12 @@ implementation in the neighboring `site` project, particularly
 - Palette: obsidian `#08090B`, white `#FFFFFF`, titanium `#BFC3C8`, graphite
   `#25282D`, electric blue `#426BFF`. Blue is an interaction accent.
 
+Surfaces and typography use neutral graphite/titanium shades throughout the
+workspace and its forms. Primary actions are white with obsidian text; blue is
+reserved for small active indicators and focus. The unchanged N mark anchors
+the desktop sidebar, mobile header and workspace banner. Shared palette and
+button rules live in `frontend/src/index.css`.
+
 The existing React workspace layout and English interface are retained.
 The website's marketing pages, demonstration achievements, account system and
 company contact information are not imported into the password manager. No

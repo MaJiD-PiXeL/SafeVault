@@ -109,6 +109,13 @@ backup password, review the local preview, then explicitly restore as new copies
 Existing entries are preserved. Repeating the same backup in the same destination
 does not create duplicates. See [backup format and restore semantics](docs/backups.md).
 
+Open **Security Center** for a local review of weak password patterns and exact
+password reuse, then choose Review to edit a flagged entry. The dashboard shows
+live review counts; the generator supports configurable character groups and
+the entry list supports sorting and clearing filters. See
+[local password health](docs/password-health.md). Before deployment, run the
+[production configuration checks](docs/deployment-checks.md).
+
 This is not a production-ready password manager: independent audit, offline
 access, recovery/key rotation and robust cross-device sync remain outstanding.
 Use synthetic test entries. Existing CLI files, Fernet data and legacy databases

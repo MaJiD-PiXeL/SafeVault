@@ -16,6 +16,17 @@ function vaultPath(id: string) {
   return `vaults/${id}/entries`
 }
 
+function versions(entry: EncryptedEntry) {
+  return { expected_revision: entry.revision, expected_state_version: entry.state_version }
+}
+
+function validateTransition(value: unknown, entry: EncryptedEntry, trashed: boolean) {
+  const result = validateEnvelope(value, entry.vault_id)
+  if (result.id !== entry.id || result.revision !== entry.revision || result.state_version !== entry.state_version + 1 ||
+      result.nonce !== entry.nonce || result.ciphertext !== entry.ciphertext || (result.deleted_at !== null) !== trashed) throw new VaultDataError()
+  return result
+}
+
 export function createVaultApi(request: Request = accountApi.vaultRequest) {
   return {
     async vaults(signal: AbortSignal): Promise<VaultMetadata[]> {
@@ -36,7 +47,7 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
       let count = -1
       let totalBytes = 0
       for (let page = 1; page <= 100; page += 1) {
-        const data = await request(`${vaultPath(id)}?page=${page}`, 'GET', undefined, signal)
+        const data = await request(`${vaultPath(id)}?state=all&page=${page}`, 'GET', undefined, signal)
         if (!object(data) || !Number.isSafeInteger(data.count) || (data.count as number) < 0 ||
             !Array.isArray(data.results) || data.results.length > 50 || (data.next !== null && typeof data.next !== 'string')) throw new VaultDataError()
         if ((data.count as number) > 5000) throw new VaultDataError('This vault is too large for this client.')
@@ -55,19 +66,28 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
       }
       throw new VaultDataError('This vault is too large for this client.')
     },
-    async save(vaultId: string, id: string, revision: number, encrypted: { nonce: string; ciphertext: string }, signal: AbortSignal) {
+    async save(vaultId: string, id: string, revision: number, encrypted: { nonce: string; ciphertext: string }, signal: AbortSignal, stateVersion = 1) {
       if (!UUID.test(id)) throw new VaultDataError()
       const { nonce, ciphertext } = encrypted
       const data = revision === 1
         ? await request(vaultPath(vaultId), 'POST', { id, nonce, ciphertext }, signal)
-        : await request(`${vaultPath(vaultId)}/${id}`, 'PATCH', { nonce, ciphertext, expected_revision: revision - 1 }, signal)
+        : await request(`${vaultPath(vaultId)}/${id}`, 'PATCH', { nonce, ciphertext, expected_revision: revision - 1, expected_state_version: stateVersion }, signal)
       const result = validateEnvelope(data, vaultId)
-      if (result.id !== id || result.revision !== revision || result.nonce !== nonce || result.ciphertext !== ciphertext) throw new VaultDataError()
+      if (result.id !== id || result.revision !== revision || result.state_version !== (revision === 1 ? 1 : stateVersion) ||
+          result.deleted_at !== null || result.nonce !== nonce || result.ciphertext !== ciphertext) throw new VaultDataError()
       return result
     },
     async remove(entry: EncryptedEntry, signal: AbortSignal) {
       if (!UUID.test(entry.id)) throw new VaultDataError()
-      await request(`${vaultPath(entry.vault_id)}/${entry.id}`, 'DELETE', { expected_revision: entry.revision }, signal)
+      return validateTransition(await request(`${vaultPath(entry.vault_id)}/${entry.id}`, 'DELETE', versions(entry), signal), entry, true)
+    },
+    async restoreEntry(entry: EncryptedEntry, signal: AbortSignal) {
+      if (!UUID.test(entry.id)) throw new VaultDataError()
+      return validateTransition(await request(`${vaultPath(entry.vault_id)}/${entry.id}/restore`, 'POST', versions(entry), signal), entry, false)
+    },
+    async purge(entry: EncryptedEntry, signal: AbortSignal) {
+      if (!UUID.test(entry.id)) throw new VaultDataError()
+      await request(`${vaultPath(entry.vault_id)}/${entry.id}/purge`, 'DELETE', versions(entry), signal)
     },
     async preferences(signal: AbortSignal) {
       return validatePreferences(await request('security-settings', 'GET', undefined, signal))

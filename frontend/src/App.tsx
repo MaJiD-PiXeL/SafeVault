@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   ArrowUpRight,
@@ -19,6 +19,7 @@ import {
   ShieldEllipsis,
   Sparkles,
   Star,
+  Trash2,
   Vault,
   Eye,
   MoreHorizontal,
@@ -37,6 +38,9 @@ import EntryDialog from './vault/EntryDialog'
 import GeneratorPanel from './vault/GeneratorPanel'
 import SecurityPanel from './vault/SecurityPanel'
 import BackupPanel from './vault/BackupPanel'
+import HealthPanel from './vault/HealthPanel'
+import { analyzePasswords } from './vault/health'
+import TrashPanel from './vault/TrashPanel'
 
 const demoAccounts = [
   {
@@ -83,6 +87,7 @@ const navigation = [
   { label: 'Favorites', icon: Star },
   { label: 'Secure Notes', icon: FolderLock },
   { label: 'Payment Cards', icon: CreditCard },
+  { label: 'Trash', icon: Trash2, count: '—' },
 ]
 
 function App() {
@@ -93,9 +98,11 @@ function App() {
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [editingEntry, setEditingEntry] = useState<UnlockedEntry | null>(null)
   const [category, setCategory] = useState('')
+  const [sort, setSort] = useState('recent')
   const [apiStatus, setApiStatus] = useState('Checking...')
   const [apiError, setApiError] = useState(false)
   const dialogRef = useRef<HTMLDialogElement>(null)
+  const health = useMemo(() => analyzePasswords(vault.entries), [vault.entries])
 
   useEffect(() => {
     if (showAddDialog && !vault.unlocked) dialogRef.current?.showModal()
@@ -169,13 +176,13 @@ function App() {
   })
 
   return (
-    <div className="min-h-screen bg-[#08090B] text-slate-100">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-[250px] flex-col overflow-y-auto border-r border-white/[0.07] bg-[#0a0c11] lg:flex">
-        <div className="flex h-[88px] shrink-0 items-center gap-3 px-7">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-white/[0.025] p-1">
+    <div className="min-h-screen bg-vault-canvas text-slate-100">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-[250px] flex-col overflow-y-auto border-r border-white/[0.07] bg-vault-surface lg:flex">
+        <div className="flex h-[104px] shrink-0 items-center gap-3 px-6">
+          <div className="flex h-12 w-14 shrink-0 items-center justify-center">
             <img
               src={BRAND.mark}
-              alt={`${BRAND.name} mark`}
+              alt={`${BRAND.name} logo`}
               className="h-full w-full object-contain"
             />
           </div>
@@ -206,9 +213,10 @@ function App() {
                 <button
                   key={item.label}
                   onClick={() => setActivePage(item.label)}
+                  aria-current={active ? 'page' : undefined}
                   className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[12px] transition ${
                     active
-                      ? 'border border-blue-400/15 bg-blue-500/[0.10] text-blue-300'
+                      ? 'nav-selected'
                       : 'border border-transparent text-slate-500 hover:bg-white/[0.035] hover:text-slate-200'
                   }`}
                 >
@@ -218,7 +226,7 @@ function App() {
 
                   {item.count && (
                     <span className="text-[10px] text-slate-600">
-                      {account.user ? (vault.unlocked ? String(accounts.length) : '—') : item.count}
+                      {account.user ? (vault.unlocked ? String(item.label === 'Trash' ? vault.trash.length : accounts.length) : '—') : item.count}
                     </span>
                   )}
                 </button>
@@ -236,7 +244,7 @@ function App() {
             onClick={() => setActivePage('Security Center')}
             className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-[12px] transition ${
               activePage === 'Security Center'
-                ? 'bg-blue-500/10 text-blue-300'
+                ? 'nav-selected'
                 : 'text-slate-500 hover:bg-white/[0.035] hover:text-slate-200'
             }`}
           >
@@ -248,19 +256,19 @@ function App() {
             onClick={() => setActivePage('Password Generator')}
             className={`mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-[12px] transition ${
               activePage === 'Password Generator'
-                ? 'bg-blue-500/10 text-blue-300'
+                ? 'nav-selected'
                 : 'text-slate-500 hover:bg-white/[0.035] hover:text-slate-200'
             }`}
           >
             <Sparkles size={16} strokeWidth={1.7} />
             Password Generator
           </button>
-          <button onClick={() => setActivePage('Backups')} className={`mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-[12px] transition ${activePage === 'Backups' ? 'bg-blue-500/10 text-blue-300' : 'text-slate-500 hover:bg-white/[0.035] hover:text-slate-200'}`}><FolderLock size={16} />Backups</button>
+          <button onClick={() => setActivePage('Backups')} className={`mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-[12px] transition ${activePage === 'Backups' ? 'nav-selected' : 'text-slate-500 hover:bg-white/[0.035] hover:text-slate-200'}`}><FolderLock size={16} />Backups</button>
         </div>
 
         <div className="mt-auto p-5">
-          <div className="rounded-2xl border border-blue-400/10 bg-gradient-to-br from-blue-500/[0.09] to-transparent p-4">
-            <div className="flex items-center gap-2 text-[11px] font-medium text-blue-200">
+          <div className="rounded-2xl border border-white/10 bg-vault-raised p-4">
+            <div className="flex items-center gap-2 text-[11px] font-medium text-slate-300">
               <ShieldEllipsis size={16} />
               Vault Protection
             </div>
@@ -270,9 +278,7 @@ function App() {
             </p>
 
             <div className="mt-4 flex items-center gap-2">
-              <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/10">
-                <div className="h-full w-4/5 rounded-full bg-blue-500" />
-              </div>
+              <LockKeyhole size={13} className="text-blue-400" />
               <span className="text-[9px] text-slate-500">{account.user ? (vault.unlocked ? 'Unlocked' : 'Locked') : 'Preview'}</span>
             </div>
           </div>
@@ -286,8 +292,8 @@ function App() {
           </button>
 
           <div className="mt-4 flex items-center gap-3 border-t border-white/[0.06] pt-5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-[11px] font-semibold text-blue-300">
-              N
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-slate-300">
+              <Vault size={16} />
             </div>
 
             <div className="min-w-0 flex-1">
@@ -303,15 +309,17 @@ function App() {
       </aside>
 
       <main className="min-h-screen lg:ml-[250px]">
-        <header className="sticky top-0 z-10 flex h-[76px] items-center justify-between border-b border-white/[0.06] bg-[#08090B]/90 px-5 backdrop-blur-xl sm:px-8 xl:px-11">
-          <div className="flex min-w-0 items-center gap-1 text-[11px] text-slate-600 sm:gap-2">
-            <span className="shrink-0">{BRAND.name}</span>
-            <span className="shrink-0">/</span>
-            <span className="truncate text-slate-300">{activePage}</span>
+        <header className="sticky top-0 z-10 flex h-[76px] items-center justify-between gap-3 border-b border-white/[0.06] bg-vault-canvas/95 px-5 backdrop-blur-xl sm:px-8 xl:px-11">
+          <div className="flex min-w-0 items-center gap-2 text-[11px] text-slate-600">
+            <img src={BRAND.mark} alt={`${BRAND.name} logo`} className="h-7 w-8 shrink-0 object-contain lg:hidden" />
+            <span className="hidden shrink-0 font-semibold tracking-[0.14em] text-slate-200 min-[400px]:inline">{BRAND.name}</span>
+            <span className="hidden shrink-0 sm:inline">/</span>
+            <span className="hidden truncate text-slate-300 sm:inline">{activePage}</span>
           </div>
 
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-            <button onClick={() => setActivePage('Account')} className="max-w-24 truncate rounded-lg border border-blue-400/20 px-3 py-2 text-xs text-blue-300 sm:max-w-32">{account.user?.username ?? 'Sign in'}</button>
+            {vault.unlocked && <button onClick={vault.controller.lock} className="flex items-center gap-2 rounded-lg border border-blue-400/25 px-3 py-2 text-xs text-blue-200"><LockKeyhole size={14} />Lock<span className="hidden sm:inline"> vault</span></button>}
+            <button onClick={() => setActivePage('Account')} className="max-w-24 truncate rounded-lg border border-white/15 px-3 py-2 text-xs text-slate-200 transition hover:bg-white/5 sm:max-w-32">{account.user?.username ?? 'Sign in'}</button>
             <div
                 role="status"
                 aria-live="polite"
@@ -321,7 +329,7 @@ function App() {
                     ? 'border-red-500/25 bg-red-500/[0.07] text-red-300'
                     : apiStatus === 'Checking...'
                       ? 'border-white/[0.08] bg-white/[0.025] text-slate-400'
-                      : 'border-blue-400/20 bg-blue-500/[0.07] text-blue-300'
+                      : 'border-white/10 bg-white/[0.025] text-slate-300'
                 }`}
               >
                 <span
@@ -352,7 +360,7 @@ function App() {
               <CircleHelp size={16} />
             </button>
 
-            <div className="hidden h-9 w-9 items-center justify-center rounded-xl border border-blue-400/20 bg-blue-500/10 text-blue-300 sm:flex">
+            <div className="hidden h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.025] text-slate-300 sm:flex">
               <Fingerprint size={17} />
             </div>
           </div>
@@ -361,15 +369,15 @@ function App() {
         <div className="mx-auto max-w-[1500px] px-5 py-8 sm:px-8 xl:px-11 xl:py-10">
           <label className="mb-6 block text-sm text-slate-400 lg:hidden">
             Navigate
-            <select value={activePage} onChange={(event) => setActivePage(event.target.value)} className="ml-3 rounded-lg border border-white/10 bg-[#0c0f15] p-2">
+            <select value={activePage} onChange={(event) => setActivePage(event.target.value)} className="ml-3 rounded-lg border border-white/10 bg-vault-surface p-2">
               {[...navigation.map((item) => item.label), 'Security Center', 'Password Generator', 'Backups', 'Account', 'Settings', 'Help'].map((page) => <option key={page}>{page}</option>)}
             </select>
           </label>
-          <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+          <div className="workspace-banner flex flex-col justify-between gap-6 rounded-2xl p-6 sm:flex-row sm:items-center sm:p-8">
             <div>
-              <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-blue-400">
-                <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
-                Secure Workspace
+              <div className="mb-4 flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-slate-300">
+                <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                {BRAND.product} / Personal Workspace
               </div>
 
               <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-[36px]">
@@ -381,13 +389,16 @@ function App() {
               </p>
             </div>
 
+            <div className="flex shrink-0 flex-col gap-5 sm:items-end">
+            <img src={BRAND.mark} alt="" aria-hidden="true" className="hidden h-16 w-20 object-contain sm:block" />
             <button
               onClick={addItem}
-              className="flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-[12px] font-medium text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-500"
+              className="brand-primary flex h-11 items-center justify-center gap-2 rounded-xl px-5 text-[12px] font-semibold"
             >
               <Plus size={16} />
               Add New Item
             </button>
+            </div>
           </div>
 
           {['Overview', 'All Passwords', 'Favorites'].includes(activePage) ? (account.user && !vault.unlocked ?
@@ -408,9 +419,9 @@ function App() {
 
             <StatCard
               icon={<ShieldCheck size={17} />}
-              label="Security Score"
-              value="—"
-              detail="Security engine not connected"
+              label="Passwords to Review"
+              value={vault.unlocked ? String(health.review) : '—'}
+              detail={vault.unlocked ? 'Local pattern and reuse checks' : 'Unlock for a local review'}
               trend={<Activity size={14} />}
             />
 
@@ -432,7 +443,7 @@ function App() {
           </div>
 
           <section className="mt-9 grid grid-cols-1 gap-5 xl:grid-cols-[1fr_320px]">
-            <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-[#0c0f15]">
+            <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-vault-surface">
               <div className="flex flex-col gap-4 border-b border-white/[0.06] p-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
                 <div>
                   <h2 className="text-[14px] font-semibold text-slate-100">
@@ -443,8 +454,9 @@ function App() {
                   </p>
                 </div>
 
-                <div className="flex gap-2">
-                  <select aria-label="Filter category" value={category} onChange={(event) => setCategory(event.target.value)} className="min-w-0 max-w-32 rounded-lg border border-white/10 bg-[#0c0f15] px-2 text-[11px] text-slate-300"><option value="">All categories</option>{[...new Set(accounts.map((item) => item.category).filter(Boolean))].sort().map((value) => <option key={value} value={value}>{value}</option>)}</select>
+                <div className="flex flex-wrap gap-2">
+                  <select aria-label="Filter category" value={category} onChange={(event) => setCategory(event.target.value)} className="min-w-0 max-w-32 rounded-lg border border-white/10 bg-vault-surface px-2 text-[11px] text-slate-300"><option value="">All categories</option>{[...new Set(accounts.map((item) => item.category).filter(Boolean))].sort().map((value) => <option key={value} value={value}>{value}</option>)}</select>
+                  <select aria-label="Sort entries" value={sort} onChange={(event) => setSort(event.target.value)} className="min-w-0 rounded-lg border border-white/10 bg-vault-surface px-2 py-2 text-[11px] text-slate-300"><option value="recent">Recently updated</option><option value="title">Title A–Z</option></select>
                   <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-white/[0.07] bg-black/20 px-3 sm:w-52">
                     <Search size={14} className="shrink-0 text-slate-600" />
 
@@ -458,7 +470,7 @@ function App() {
                   </div>
 
                   <button
-                    onClick={() => setActivePage('All Passwords')}
+                    onClick={() => { setActivePage('All Passwords'); setSearch(''); setCategory('') }}
                     className="rounded-lg border border-white/[0.07] px-3 text-[10px] text-slate-400 transition hover:bg-white/[0.04]"
                   >
                     View all
@@ -474,7 +486,7 @@ function App() {
               </div>
 
               <div className="divide-y divide-white/[0.045]">
-                {filteredAccounts.map((account) => (
+                {[...filteredAccounts].sort((a, b) => sort === 'title' ? a.name.localeCompare(b.name) : (Date.parse(b.record?.envelope.updated_at ?? '') || 0) - (Date.parse(a.record?.envelope.updated_at ?? '') || 0)).map((account) => (
                   <div
                     key={account.id}
                     className="grid grid-cols-1 gap-3 px-5 py-4 transition hover:bg-white/[0.018] sm:grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(0,1fr)_35px] sm:items-center sm:gap-4 sm:px-6"
@@ -541,7 +553,8 @@ function App() {
 
                 {filteredAccounts.length === 0 && (
                   <div className="px-6 py-12 text-center text-[12px] text-slate-500">
-                    No matching items found.
+                    <p>{accounts.length === 0 ? 'Your vault is ready. Add your first password.' : 'No matching items found.'}</p>
+                    {accounts.length === 0 ? <button onClick={addItem} className="brand-primary mt-4 rounded-lg px-4 py-2">Add password</button> : <button onClick={() => { setSearch(''); setCategory(''); setActivePage('All Passwords') }} className="mt-4 rounded-lg border border-white/15 px-4 py-2 text-slate-200">Clear filters and view all</button>}
                   </div>
                 )}
               </div>
@@ -558,16 +571,15 @@ function App() {
             </div>
 
             <div className="space-y-5">
-              <div className="relative overflow-hidden rounded-2xl border border-blue-400/15 bg-gradient-to-br from-[#101a31] via-[#0c111d] to-[#0b0d13] p-6">
-                <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-blue-500/[0.08] blur-3xl" />
+              <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-vault-raised p-6">
 
                 <div className="relative flex items-center justify-between">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-blue-400/20 bg-blue-500/10 text-blue-300">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.025] text-slate-300">
                     <ShieldCheck size={20} />
                   </div>
 
-                  <span className="rounded-full border border-blue-400/15 bg-blue-500/[0.07] px-2.5 py-1 text-[9px] text-blue-300">
-                    Preview
+                  <span className="rounded-full border border-white/10 bg-white/[0.025] px-2.5 py-1 text-[9px] text-slate-300">
+                    {vault.unlocked ? 'Local checks' : 'Locked review'}
                   </span>
                 </div>
 
@@ -576,22 +588,22 @@ function App() {
                 </h3>
 
                 <p className="relative mt-2 text-[11px] leading-6 text-slate-500">
-                  Your vault security metrics will appear here once the security
-                  engine is connected.
+                  {vault.unlocked ? `${health.review} of ${health.total} entries need review. ${health.weak} have weak patterns and ${health.reused} reuse a password. Counts can overlap.` : 'Unlock your vault to check for weak patterns and reused passwords on this device.'}
                 </p>
 
                 <div className="relative mt-6 flex items-center justify-between border-t border-white/[0.07] pt-4">
                   <span className="text-[10px] text-slate-500">
-                    Security engine
+                    Password health
                   </span>
                   <span className="flex items-center gap-2 text-[10px] text-amber-300">
                     <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                    Not connected
+                    {vault.unlocked ? 'Available locally' : 'Unlock required'}
                   </span>
                 </div>
+                <button onClick={() => setActivePage('Security Center')} className="relative mt-5 flex w-full items-center justify-between rounded-xl border border-white/15 px-4 py-3 text-xs text-slate-200">Review password health<ArrowUpRight size={14} /></button>
               </div>
 
-              <div className="rounded-2xl border border-white/[0.07] bg-[#0c0f15] p-6">
+              <div className="rounded-2xl border border-white/[0.07] bg-vault-surface p-6">
                 <div className="flex items-center gap-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/[0.07] bg-white/[0.035] text-slate-300">
                     <Sparkles size={17} />
@@ -649,13 +661,18 @@ function App() {
           </>) : ['Account', 'Settings'].includes(activePage) ? (
             <AccountPanel key={account.user?.id ?? 'anonymous'} user={account.user} status={account.status} onUserChange={account.acceptUser} onRefresh={account.refresh} onLock={vault.controller.lock} />
           ) : activePage === 'Backups' ? (
-            !account.user ? <section className="mt-9 rounded-2xl border border-white/10 bg-[#0c0f15] p-6"><h2 className="text-lg font-semibold">Encrypted backups</h2><p className="mt-3 text-sm text-slate-400">Sign in and unlock a vault to export or restore an encrypted backup.</p></section> : !vault.unlocked ? <VaultAccess key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} /> : <BackupPanel key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} />
+            !account.user ? <section className="mt-9 rounded-2xl border border-white/10 bg-vault-surface p-6"><h2 className="text-lg font-semibold">Encrypted backups</h2><p className="mt-3 text-sm text-slate-400">Sign in and unlock a vault to export or restore an encrypted backup.</p></section> : !vault.unlocked ? <VaultAccess key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} /> : <BackupPanel key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} />
+          ) : activePage === 'Trash' ? (
+            !account.user ? <section className="mt-9 rounded-2xl border border-white/10 bg-vault-surface p-6"><h2 className="text-lg font-semibold">Encrypted Trash</h2><p className="mt-3 text-sm text-slate-400">Sign in and unlock your vault to restore deleted entries.</p></section> : !vault.unlocked ? <VaultAccess key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} /> : <TrashPanel key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} entries={vault.trash} />
           ) : activePage === 'Password Generator' ? (
             <GeneratorPanel key={`${account.user?.id ?? 'guest'}:${vault.lockEpoch}`} />
           ) : activePage === 'Security Center' ? (
-            <SecurityPanel key={`${account.user?.id ?? 'guest'}:${vault.loaded}`} controller={vault.controller} signedIn={Boolean(account.user)} />
+            <>
+              <HealthPanel key={`${account.user?.id ?? 'guest'}:${vault.lockEpoch}`} entries={vault.entries} unlocked={vault.unlocked} busy={vault.busy} onUnlock={() => setActivePage('All Passwords')} onEdit={(entry) => { setEditingEntry(entry); setShowAddDialog(true) }} />
+              <SecurityPanel key={`${account.user?.id ?? 'guest'}:${vault.loaded}`} controller={vault.controller} signedIn={Boolean(account.user)} />
+            </>
           ) : (
-            <section className="mt-9 rounded-2xl border border-white/10 bg-[#0c0f15] p-6">
+            <section className="mt-9 rounded-2xl border border-white/10 bg-vault-surface p-6">
               <h2 className="text-lg font-semibold">{activePage}</h2>
               <p className="mt-3 text-sm leading-7 text-slate-400">
                 {activePage === 'Help'
@@ -686,7 +703,7 @@ function App() {
             onClose={() => setShowAddDialog(false)}
             aria-modal="true"
             aria-labelledby="add-item-title"
-            className="m-auto w-[calc(100%_-_2rem)] max-w-md rounded-2xl border border-white/10 bg-[#0c0f15] p-6 text-slate-100 shadow-2xl shadow-black/50 backdrop:bg-black/75 backdrop:backdrop-blur-sm"
+            className="m-auto w-[calc(100%_-_2rem)] max-w-md rounded-2xl border border-white/10 bg-vault-surface p-6 text-slate-100 shadow-2xl shadow-black/50 backdrop:bg-black/75 backdrop:backdrop-blur-sm"
           >
             <div className="flex items-center justify-between">
               <div>
@@ -751,7 +768,7 @@ function App() {
 
               <button
                 onClick={() => setShowAddDialog(false)}
-                className="h-11 flex-1 rounded-xl bg-blue-600 text-[11px] font-medium text-white hover:bg-blue-500"
+                className="brand-primary h-11 flex-1 rounded-xl text-[11px] font-semibold"
               >
                 Close Preview
               </button>
@@ -777,9 +794,9 @@ function StatCard({
   trend: React.ReactNode
 }) {
   return (
-    <div className="group rounded-2xl border border-white/[0.07] bg-[#0c0f15] p-5 transition duration-200 hover:border-blue-400/20 hover:bg-[#0e121b]">
+    <div className="group rounded-2xl border border-white/[0.07] bg-vault-surface p-5 transition duration-200 hover:border-white/20 hover:bg-vault-raised">
       <div className="flex items-center justify-between">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/[0.07] bg-white/[0.025] text-slate-400 transition group-hover:border-blue-400/20 group-hover:text-blue-300">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/[0.07] bg-white/[0.025] text-slate-300 transition group-hover:border-white/20 group-hover:text-white">
           {icon}
         </div>
 

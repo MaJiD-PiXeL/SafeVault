@@ -26,5 +26,6 @@ export function useVault(ownerId: number | null, enabled: boolean) {
     }
   }, [controller])
   const current = enabled && snapshot.ownerId === ownerId && ownerId !== null
-  return { ...snapshot, unlocked: current && snapshot.unlocked, entries: current && snapshot.unlocked ? snapshot.entries : [], controller }
+  return { ...snapshot, unlocked: current && snapshot.unlocked, entries: current && snapshot.unlocked ? snapshot.entries : [],
+    trash: current && snapshot.unlocked ? snapshot.trash : [], controller }
 }

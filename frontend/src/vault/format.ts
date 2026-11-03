@@ -3,7 +3,7 @@ export const PROFILE = Object.freeze({ format_version: 1, cipher: 'AES-256-GCM',
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export type VaultMetadata = typeof PROFILE & { id: string; kdf_salt: string; wrap_nonce: string; wrapped_key: string }
 export type EncryptedEntry = { id: string; vault_id: string; nonce: string; ciphertext: string;
-  revision: number; created_at: string; updated_at: string }
+  revision: number; state_version: number; deleted_at: string | null; created_at: string; updated_at: string }
 export type EntryPayload = { schema_version: 1; title: string; username: string; password: string;
   website: string; notes: string; category: string; favorite: boolean }
 export type UnlockedEntry = { envelope: EncryptedEntry; data: EntryPayload }
@@ -49,12 +49,15 @@ export function validateVault(value: unknown): VaultMetadata {
 export function validateEnvelope(value: unknown, vaultId: string): EncryptedEntry {
   if (!object(value) || typeof value.id !== 'string' || !UUID.test(value.id) || value.vault_id !== vaultId ||
       !Number.isSafeInteger(value.revision) || (value.revision as number) < 1 || (value.revision as number) > 2147483647 ||
+      !Number.isSafeInteger(value.state_version) || (value.state_version as number) < 1 || (value.state_version as number) > 2147483647 ||
+      (value.deleted_at !== null && (typeof value.deleted_at !== 'string' || !Number.isFinite(Date.parse(value.deleted_at)))) ||
       typeof value.created_at !== 'string' || !Number.isFinite(Date.parse(value.created_at)) ||
       typeof value.updated_at !== 'string' || !Number.isFinite(Date.parse(value.updated_at))) throw new VaultDataError()
   fromBase64(value.nonce, 12)
   fromBase64(value.ciphertext, 17, 65552)
   return { id: value.id, vault_id: vaultId, nonce: value.nonce as string, ciphertext: value.ciphertext as string,
-    revision: value.revision as number, created_at: value.created_at, updated_at: value.updated_at }
+    revision: value.revision as number, state_version: value.state_version as number, deleted_at: value.deleted_at as string | null,
+    created_at: value.created_at, updated_at: value.updated_at }
 }
 
 export function validatePayload(value: unknown): EntryPayload {

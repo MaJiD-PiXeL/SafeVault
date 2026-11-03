@@ -15,7 +15,7 @@ from rest_framework.test import APIRequestFactory
 from rest_framework.views import APIView
 
 from .models import NonceReservation, SecuritySettings, Vault, VaultEntry
-from .services import RevisionConflict, create_entry, create_vault, delete_entry, list_entries, update_entry
+from .services import RevisionConflict, create_entry, create_vault, delete_entry, list_entries, purge_entry, update_entry
 from .validators import Base64Bytes
 
 
@@ -143,6 +143,8 @@ class VaultStorageTests(TestCase):
             update_entry(user=self.owner, entry_id=entry.pk, expected_revision=2,
                          nonce=encoded(12, 2), ciphertext=encoded(60))
         delete_entry(user=self.owner, entry_id=entry.pk, expected_revision=2)
+        self.assertTrue(VaultEntry.objects.filter(pk=entry.pk, deleted_at__isnull=False).exists())
+        purge_entry(user=self.owner, entry_id=entry.pk, expected_revision=2, expected_state_version=2)
         self.assertFalse(VaultEntry.objects.filter(pk=entry.pk).exists())
         for byte in (2, 3):
             with self.subTest(byte=byte), self.assertRaises(ValidationError):
