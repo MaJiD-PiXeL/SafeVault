@@ -57,7 +57,7 @@ backend/.venv/Scripts/python.exe -B backend/manage.py check
 backend/.venv/Scripts/python.exe -B backend/manage.py test accounts vault --settings=config.test_settings -v 2
 ```
 
-The SQLite in-memory suite skips the two PostgreSQL concurrency tests.
+The SQLite in-memory suite skips the five PostgreSQL concurrency tests.
 To run all backend tests on PostgreSQL, use the explicit integration settings:
 
 ```powershell
@@ -115,6 +115,18 @@ live review counts; the generator supports configurable character groups and
 the entry list supports sorting and clearing filters. See
 [local password health](docs/password-health.md). Before deployment, run the
 [production configuration checks](docs/deployment-checks.md).
+
+Open **Security Center → Change master password** while unlocked to replace
+the vault's master password. The current password is checked locally; entries
+and Trash preserve their encrypted bytes. The vault locks on success and uses
+the new password on its next unlock. Account and backup passwords are separate.
+See [master-password changes and their limits](docs/master-password.md).
+
+**Move to Trash** now keeps an encrypted entry recoverable. Open **Trash** to
+restore it or explicitly delete it forever. Trash has no automatic expiry and
+counts toward vault capacity. New backups include active entries only. Apply the
+additive backend migration before using this frontend; see
+[Trash behavior and API compatibility](docs/trash.md).
 
 This is not a production-ready password manager: independent audit, offline
 access, recovery/key rotation and robust cross-device sync remain outstanding.

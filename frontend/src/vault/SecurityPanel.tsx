@@ -15,7 +15,7 @@ export default function SecurityPanel({ controller, signedIn }: { controller: Va
       <button disabled={state.busy || !state.loaded} onClick={async () => { if (await controller.updatePreferences({ auto_lock_seconds: seconds, lock_on_hidden: hidden })) setSaved(true) }} className="mt-6 rounded-xl brand-primary px-5 py-3 text-sm disabled:opacity-50">Save security settings</button>
       {saved && <p role="status" className="mt-4 text-sm text-blue-300">Security settings saved.</p>}
       {state.error && <p role="alert" className="mt-4 text-sm text-red-300">{state.error}</p>}
-      <p className="mt-6 text-xs leading-6 text-amber-200/70">Independent security audit pending. Offline access, master-password changes and recovery keys are not available in this build.</p>
+      <p className="mt-6 text-xs leading-6 text-amber-200/70">Independent security audit pending. Offline access and recovery keys are not available in this build.</p>
     </>}
   </section>
 }

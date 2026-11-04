@@ -87,8 +87,10 @@ no-store. Ownership comes only from authenticated server context.
 | GET/POST | `/api/vaults/` | v1 metadata, UUID and wrapped key |
 | GET/POST | `/api/vaults/<uuid>/entries/` | UUID, nonce, ciphertext |
 | GET | `/api/vaults/<uuid>/entries/<uuid>/` | none |
-| PATCH | `/api/vaults/<uuid>/entries/<uuid>/` | nonce, ciphertext, expected_revision |
-| DELETE | `/api/vaults/<uuid>/entries/<uuid>/` | expected_revision |
+| PATCH | `/api/vaults/<uuid>/entries/<uuid>/` | nonce, ciphertext, expected_revision, expected_state_version |
+| DELETE | `/api/vaults/<uuid>/entries/<uuid>/` | expected_revision, expected_state_version (move to Trash) |
+| POST | `/api/vaults/<uuid>/entries/<uuid>/restore/` | expected_revision, expected_state_version |
+| DELETE | `/api/vaults/<uuid>/entries/<uuid>/purge/` | expected_revision, expected_state_version |
 | GET/PATCH | `/api/security-settings/` | auto_lock_seconds, lock_on_hidden |
 
 Both vault and entry identities are scoped to the owner. Unknown/plaintext
@@ -101,6 +103,12 @@ nonces return 409 conflicts. Nonce reservations survive edits/deletion. Editors
 retain their original revision so a refresh cannot silently make an old draft
 overwrite newer data. Writes are never automatically replayed. Unconfirmed
 creation requires reloading metadata before another creation attempt.
+
+The later Trash extension adds lifecycle metadata without changing encryption v1.
+The client loads active and trashed envelopes together with `?state=all&page=1`,
+then separates them after authentication/decryption. Default entry lists include
+active items only. See [Trash](trash.md) for retention, version checks, permanent
+deletion, capacity and backup semantics.
 
 Entry pages contain 50 records. Clients construct local page paths rather than
 following server URLs, check counts/duplicates and require a complete snapshot.
@@ -128,7 +136,11 @@ test database contains no plaintext master, account/entry password or title.
 A real one-minute inactivity test also returns the page to its locked state.
 The real safevault database is not used for these records.
 
-Independent audit, recovery/master-password changes, rollback detection, offline
+Master-password rewrapping is now available in Security Center; see
+[the change protocol and its limits](master-password.md). Each unlock fetches
+current vault metadata, and successful password changes lock the client.
+
+Independent audit, recovery/data-key rotation, rollback detection, offline
 storage, conflict-aware device sync, large-vault streaming, attachments/secure
 notes/card schemas and production hardening remain future work. No legacy data
 migration or scheduled cleanup/sync is introduced. Use synthetic test entries.

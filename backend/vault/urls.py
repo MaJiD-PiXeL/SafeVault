@@ -8,6 +8,7 @@ urlpatterns = [
     path("", views.home, name="home"),
     path("health/", views.health_check, name="health"),
     path("vaults/", api_views.VaultsView.as_view(), name="vaults"),
+    path("vaults/<uuid:vault_id>/master-password/", api_views.MasterPasswordView.as_view(), name="master-password"),
     path("vaults/<uuid:vault_id>/entries/", api_views.EntriesView.as_view(), name="entries"),
     path("vaults/<uuid:vault_id>/entries/<uuid:entry_id>/", api_views.EntryView.as_view(), name="entry"),
     path("vaults/<uuid:vault_id>/entries/<uuid:entry_id>/restore/", api_views.EntryRestoreView.as_view(), name="entry-restore"),

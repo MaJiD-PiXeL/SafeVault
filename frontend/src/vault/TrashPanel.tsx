@@ -42,7 +42,7 @@ export default function TrashPanel({ controller, entries }: { controller: VaultC
       <button disabled={state.busy} onClick={() => { setConfirmation(null); setMessage(''); void controller.refresh() }} className="rounded-lg border border-white/15 px-4 py-2 text-xs disabled:opacity-50">Refresh Trash</button>
     </div>
     <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">Deleted entries stay encrypted and can be restored with their original details. Items remain here until you explicitly delete them forever. Trash counts toward the vault storage limit.</p>
-    <p className="mt-2 text-xs leading-6 text-slate-400">Trash is excluded from search, favorites, password health and new backups. Restore an entry first to include it in a backup.</p>
+    <p className="mt-2 text-xs leading-6 text-slate-400">Trash is excluded from the main search, favorites, password health and new backups. Restore an entry first to include it in a backup.</p>
     {state.error && <p role="alert" className="mt-5 rounded-xl border border-red-400/20 p-4 text-sm text-red-300">{state.error}</p>}
     {message && <p role="status" className="mt-5 rounded-xl border border-blue-400/20 p-4 text-sm text-blue-200">{message}</p>}
     <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
@@ -52,7 +52,7 @@ export default function TrashPanel({ controller, entries }: { controller: VaultC
     <div className="mt-4 divide-y divide-white/10">{filtered.slice(currentPage * 20, (currentPage + 1) * 20).map(({ envelope, data }) => {
       const confirming = sameVersion(confirmation, envelope)
       return <article key={envelope.id} className="py-5">
-        <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1"><h3 className="truncate text-sm font-semibold">{data.title}</h3><p className="mt-1 truncate text-xs text-slate-400">{data.username}</p><p className="mt-2 text-xs text-slate-400">Moved to Trash {new Date(envelope.deleted_at!).toLocaleString()}</p></div>
           <div className="flex flex-wrap gap-2">
             <button disabled={state.busy} aria-label={`Restore ${data.title}`} onClick={() => void restore(envelope)} className="flex items-center gap-2 rounded-lg border border-blue-400/25 px-3 py-2 text-xs text-blue-200 disabled:opacity-50"><RotateCcw size={14} />Restore</button>

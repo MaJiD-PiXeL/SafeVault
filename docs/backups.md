@@ -29,6 +29,10 @@ master password. Categories, favorites, Unicode, password whitespace and optiona
 empty website/notes fields are preserved. New records start at revision 1 with new
 server timestamps; original IDs/revisions/timestamps remain only inside the archive.
 
+New exports include active entries only; Trash is excluded. Restore a Trash
+item before preparing a backup to include it. Earlier archives may retain copies
+of entries later trashed or permanently deleted. See [Trash semantics](trash.md).
+
 The archive is an entry snapshot. Account credentials, sessions and account/security
 settings are not backed up. Knowing the backup password can recover the snapshot
 into another accessible vault, but does not reveal/reset the original vault master

@@ -42,6 +42,18 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
       if (JSON.stringify(result) !== JSON.stringify(vault)) throw new VaultDataError()
       return result
     },
+    async changeMasterPassword(previous: VaultMetadata, value: VaultMetadata, signal: AbortSignal) {
+      const old = validateVault(previous)
+      const vault = validateVault(value)
+      if (vault.id !== old.id || vault.kdf_salt === old.kdf_salt || vault.wrap_nonce === old.wrap_nonce ||
+          vault.wrapped_key === old.wrapped_key) throw new VaultDataError('A fresh key wrapper is required.')
+      const result = validateVault(await request(`vaults/${old.id}/master-password`, 'POST', {
+        expected_kdf_salt: old.kdf_salt, expected_wrap_nonce: old.wrap_nonce, expected_wrapped_key: old.wrapped_key,
+        kdf_salt: vault.kdf_salt, wrap_nonce: vault.wrap_nonce, wrapped_key: vault.wrapped_key,
+      }, signal))
+      if (JSON.stringify(result) !== JSON.stringify(vault)) throw new VaultDataError()
+      return result
+    },
     async entries(id: string, signal: AbortSignal): Promise<EncryptedEntry[]> {
       const entries: EncryptedEntry[] = []
       let count = -1

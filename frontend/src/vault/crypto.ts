@@ -41,18 +41,44 @@ export async function createEncryptedVault(master: string, derive: DeriveKey, si
   } finally { bytes.fill(0) }
 }
 
-export async function unlockEncryptedVault(value: unknown, master: string, derive: DeriveKey, signal: AbortSignal) {
-  requireCrypto()
-  const vault = validateVault(value)
+async function unwrapDataKey(vault: VaultMetadata, master: string, derive: DeriveKey, signal: AbortSignal) {
   const wrapper = await wrappingKey(master, vault.kdf_salt, derive, signal)
-  let bytes: Uint8Array | undefined
+  let bytes: Uint8Array<ArrayBuffer> | undefined
   try {
     bytes = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromBase64(vault.wrap_nonce, 12),
       additionalData: wrapAAD(vault), tagLength: 128 }, wrapper, fromBase64(vault.wrapped_key, 48)))
     signal.throwIfAborted()
-    return await importDataKey(bytes)
-  } catch { throw new VaultDataError() }
-  finally { bytes?.fill(0) }
+    return bytes
+  } catch (error) {
+    bytes?.fill(0)
+    signal.throwIfAborted()
+    throw error instanceof VaultDataError ? error : new VaultDataError()
+  }
+}
+
+export async function unlockEncryptedVault(value: unknown, master: string, derive: DeriveKey, signal: AbortSignal) {
+  requireCrypto()
+  const bytes = await unwrapDataKey(validateVault(value), master, derive, signal)
+  try { return await importDataKey(bytes) }
+  finally { bytes.fill(0) }
+}
+
+export async function rewrapEncryptedVault(value: unknown, currentMaster: string, newMaster: string, derive: DeriveKey, signal: AbortSignal) {
+  requireCrypto()
+  const previous = validateVault(value)
+  if (newMaster.length < 12 || newMaster.length > 1024) throw new VaultDataError('Use 12–1,024 characters for your new master password.')
+  if (currentMaster === newMaster) throw new VaultDataError('Choose a different master password.')
+  const bytes = await unwrapDataKey(previous, currentMaster, derive, signal)
+  try {
+    const vault = { ...previous, kdf_salt: toBase64(crypto.getRandomValues(new Uint8Array(16))),
+      wrap_nonce: toBase64(crypto.getRandomValues(new Uint8Array(12))) }
+    const wrapper = await wrappingKey(newMaster, vault.kdf_salt, derive, signal)
+    const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: fromBase64(vault.wrap_nonce, 12),
+      additionalData: wrapAAD(vault), tagLength: 128 }, wrapper, bytes)
+    signal.throwIfAborted()
+    vault.wrapped_key = toBase64(new Uint8Array(encrypted))
+    return { vault, key: await importDataKey(bytes) }
+  } finally { bytes.fill(0) }
 }
 
 export async function encryptEntry(key: CryptoKey, vaultId: string, id: string, revision: number, value: EntryPayload) {

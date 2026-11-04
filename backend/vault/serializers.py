@@ -58,6 +58,15 @@ class EntryCreateSerializer(StrictFields, serializers.Serializer):
     ciphertext = EncodedBytes(17, 65552)
 
 
+class MasterPasswordSerializer(StrictFields, serializers.Serializer):
+    expected_kdf_salt = EncodedBytes(16, 16)
+    expected_wrap_nonce = EncodedBytes(12, 12)
+    expected_wrapped_key = EncodedBytes(48, 48)
+    kdf_salt = EncodedBytes(16, 16)
+    wrap_nonce = EncodedBytes(12, 12)
+    wrapped_key = EncodedBytes(48, 48)
+
+
 class EntryUpdateSerializer(StrictFields, serializers.Serializer):
     expected_revision = StrictInteger(min_value=1, max_value=2147483646)
     expected_state_version = StrictInteger(min_value=1, max_value=2147483647)

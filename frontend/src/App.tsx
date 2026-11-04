@@ -37,6 +37,7 @@ import VaultAccess from './vault/VaultAccess'
 import EntryDialog from './vault/EntryDialog'
 import GeneratorPanel from './vault/GeneratorPanel'
 import SecurityPanel from './vault/SecurityPanel'
+import MasterPasswordPanel from './vault/MasterPasswordPanel'
 import BackupPanel from './vault/BackupPanel'
 import HealthPanel from './vault/HealthPanel'
 import { analyzePasswords } from './vault/health'
@@ -670,6 +671,7 @@ function App() {
             <>
               <HealthPanel key={`${account.user?.id ?? 'guest'}:${vault.lockEpoch}`} entries={vault.entries} unlocked={vault.unlocked} busy={vault.busy} onUnlock={() => setActivePage('All Passwords')} onEdit={(entry) => { setEditingEntry(entry); setShowAddDialog(true) }} />
               <SecurityPanel key={`${account.user?.id ?? 'guest'}:${vault.loaded}`} controller={vault.controller} signedIn={Boolean(account.user)} />
+              {account.user && <MasterPasswordPanel key={`${account.user.id}:${vault.selectedId}:${vault.lockEpoch}:${vault.unlocked}`} controller={vault.controller} onUnlock={() => setActivePage('All Passwords')} />}
             </>
           ) : (
             <section className="mt-9 rounded-2xl border border-white/10 bg-vault-surface p-6">

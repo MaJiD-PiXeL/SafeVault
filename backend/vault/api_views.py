@@ -9,9 +9,9 @@ from accounts.parsers import BoundedJSONParser
 from accounts.security import limit_requests
 from .models import RestoreReceipt, SecuritySettings, Vault, VaultEntry
 from .serializers import (EntryCreateSerializer, EntryDeleteSerializer, EntrySerializer,
-                          EntryUpdateSerializer, RestoreSerializer, SettingsSerializer, VaultSerializer)
+                          EntryUpdateSerializer, MasterPasswordSerializer, RestoreSerializer, SettingsSerializer, VaultSerializer)
 from .services import (NonceConflict, RevisionConflict, create_entry, create_vault,
-                       delete_entry, list_entries, purge_entry, restore_entry, restore_entries, update_entry)
+                       change_master_password, delete_entry, list_entries, purge_entry, restore_entry, restore_entries, update_entry)
 
 
 class Conflict(APIException):
@@ -45,6 +45,15 @@ class VaultsView(VaultAPIView):
         vault = create_vault(user=request.user, vault_id=data["id"], kdf_salt=data["kdf_salt"],
                              wrap_nonce=data["wrap_nonce"], wrapped_key=data["wrapped_key"])
         return Response(VaultSerializer(vault).data, status=201)
+
+
+class MasterPasswordView(VaultAPIView):
+    def post(self, request, vault_id):
+        Vault.objects.for_user(request.user).get(pk=vault_id)
+        serializer = MasterPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        vault = change_master_password(user=request.user, vault_id=vault_id, **serializer.validated_data)
+        return Response(VaultSerializer(vault).data)
 
 
 class EntryPagination(PageNumberPagination):

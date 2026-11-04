@@ -20,7 +20,8 @@ authentication and session/CSRF controls (see `authentication.md`); account-pass
 not claim to recover a vault's encryption key.
 
 The server sees vault/entry identifiers, account identity, timestamps, revision
-numbers, entry counts and ciphertext lengths. This is not metadata-free storage.
+numbers, entry counts and ciphertext lengths. Trash adds a visible deletion
+timestamp and lifecycle counter. This is not metadata-free storage.
 TLS protects transport. Client compromise/XSS can expose an unlocked vault.
 No encryption keys or decrypted data belong in logs, localStorage, telemetry,
 URL parameters or exception messages.
@@ -60,9 +61,10 @@ velnar.safevault:1:wrap:{vault_uuid}:argon2id:19:65536:3:4:{kdf_salt}
 
 `kdf_salt` in this string is the canonical Base64 text stored on the vault.
 Generate a new salt and independent data key for each vault. Never reuse a
-nonce under the same key. Vault provisioning is currently create-only through
-the service boundary; key rotation, rewrapping and ownership transfer require
-a future explicit protocol and are not supported by this phase.
+nonce under the same key. The explicit [master-password change protocol](master-password.md)
+can replace the wrapping salt, nonce and encrypted data key under a vault lock
+and comparison against the expected current wrapper. The data key itself stays
+unchanged. Data-key rotation and ownership transfer remain unsupported.
 
 ## Entry envelope
 
@@ -83,6 +85,12 @@ First revision is `1`; updates encrypt using `expected_revision + 1`. UUIDs,
 revision and vault identity must match on decryption. Reject authentication-tag
 failure without showing partial plaintext. No client-provided AAD is persisted;
 clients reconstruct it using these rules.
+
+Trash leaves the encrypted `revision`, nonce and ciphertext unchanged. Its
+separate `state_version` increments on move/restore, and `deleted_at` records
+whether the entry is in Trash. These fields are server metadata, outside GCM
+AAD. Writes check both content revision and lifecycle version; see
+[Trash semantics](trash.md). The v1 payload and AAD strings remain unchanged.
 
 The decrypted JSON schema is:
 

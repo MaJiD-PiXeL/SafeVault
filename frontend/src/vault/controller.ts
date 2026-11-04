@@ -1,5 +1,5 @@
 import { ApiError, accountError } from '../api.ts'
-import { createEncryptedVault, decryptEntry, encryptEntry, unlockEncryptedVault } from './crypto.ts'
+import { createEncryptedVault, decryptEntry, encryptEntry, rewrapEncryptedVault, unlockEncryptedVault } from './crypto.ts'
 import type { DeriveKey } from './crypto.ts'
 import { DEFAULT_PREFERENCES, validatePayload, VaultDataError } from './format.ts'
 import type { EntryPayload, SecurityPreferences, UnlockedEntry, VaultMetadata } from './format.ts'
@@ -12,11 +12,11 @@ type Snapshot = { ownerId: number | null; loaded: boolean; busy: boolean; unlock
   vaults: VaultMetadata[]; selectedId: string | null; entries: UnlockedEntry[]; trash: UnlockedEntry[]; preferences: SecurityPreferences; lockEpoch: number;
   backupExport: { text: string; fileName: string } | null;
   backupPreview: { exportedAt: string; count: number; titles: string[]; alreadyRestored: boolean } | null;
-  backupResult: string }
+  backupResult: string; masterPasswordResult: string }
 type Operation = { signal: AbortSignal }
 const initial = (): Snapshot => ({ ownerId: null, loaded: false, busy: false, unlocked: false, error: '',
   vaults: [], selectedId: null, entries: [], trash: [], preferences: { ...DEFAULT_PREFERENCES }, lockEpoch: 0,
-  backupExport: null, backupPreview: null, backupResult: '' })
+  backupExport: null, backupPreview: null, backupResult: '', masterPasswordResult: '' })
 
 export class VaultController {
   #state: Snapshot = initial()
@@ -43,7 +43,7 @@ export class VaultController {
     this.#backupDraft = null
     this.#backupWork = false
     this.#publish({ entries: [], trash: [], unlocked: false, busy: false, error: '', lockEpoch: this.#state.lockEpoch + 1,
-      backupExport: null, backupPreview: null, backupResult: '' })
+      backupExport: null, backupPreview: null, backupResult: '', masterPasswordResult: '' })
   }
 
   switchAccount(ownerId: number | null, enabled: boolean) {
@@ -53,7 +53,7 @@ export class VaultController {
     if (ownerId !== null && enabled) void this.load()
   }
 
-  async #run(action: (op: Operation) => Promise<{ patch: Partial<Snapshot>; key?: CryptoKey; backupDraft?: OpenedBackup | null }>, backupWork = false): Promise<boolean> {
+  async #run(action: (op: Operation) => Promise<{ patch: Partial<Snapshot>; key?: CryptoKey; backupDraft?: OpenedBackup | null; lock?: boolean }>, backupWork = false): Promise<boolean> {
     if (this.#state.busy || this.#state.ownerId === null) return false
     const epoch = ++this.#epoch
     const abort = new AbortController()
@@ -63,6 +63,7 @@ export class VaultController {
     try {
       const result = await action({ signal: abort.signal })
       if (epoch !== this.#epoch || abort.signal.aborted) return false
+      if (result.lock) this.lock()
       if (result.key) { this.#key = result.key; this.#lastActivity = this.#clock() }
       if (result.backupDraft !== undefined) this.#backupDraft = result.backupDraft
       this.#publish({ ...result.patch, busy: false })
@@ -113,11 +114,16 @@ export class VaultController {
   }
 
   unlock = (master: string) => this.#run(async ({ signal }) => {
-    const metadata = this.#state.vaults.find((vault) => vault.id === this.#state.selectedId)
+    const selectedId = this.#state.selectedId
+    if (!this.#state.loaded || !selectedId) throw new VaultDataError('Load and select your vault first.')
+    // A different device may have changed the password since this client locked.
+    const vaults = await this.#api.vaults(signal)
+    signal.throwIfAborted()
+    const metadata = vaults.find((vault) => vault.id === selectedId)
     if (!metadata) throw new VaultDataError('Load and select your vault first.')
     const key = await unlockEncryptedVault(metadata, master, this.#derive, signal)
     const snapshot = await this.#readEntries(key, metadata.id, signal)
-    return { key, patch: { ...snapshot, unlocked: true } }
+    return { key, patch: { ...snapshot, vaults, unlocked: true, masterPasswordResult: '' } }
   })
 
   refresh = () => this.#run(async ({ signal }) => {
@@ -168,6 +174,31 @@ export class VaultController {
   })
 
   updatePreferences = (value: SecurityPreferences) => this.#run(async ({ signal }) => ({ patch: { preferences: await this.#api.updatePreferences(value, signal) } }))
+
+  changeMasterPassword = (currentMaster: string, newMaster: string) => this.#run(async ({ signal }) => {
+    const previous = this.#state.vaults.find((vault) => vault.id === this.#state.selectedId)
+    if (!this.#key || !this.#state.unlocked || !previous) throw new VaultDataError('Unlock your vault before changing its master password.')
+    const vaults = this.#state.vaults
+    const { vault, key } = await rewrapEncryptedVault(previous, currentMaster, newMaster, this.#derive, signal)
+    // Authenticate active and trashed entries under the preserved data key before committing.
+    await this.#readEntries(key, previous.id, signal)
+    signal.throwIfAborted()
+    // A lock or lost response after dispatch must require fresh metadata as well.
+    this.#publish({ loaded: false, vaults: [] })
+    let saved: VaultMetadata
+    try { saved = await this.#api.changeMasterPassword(previous, vault, signal) }
+    catch {
+      if (!signal.aborted) {
+        this.lock()
+        this.#publish({ loaded: false, vaults: [], selectedId: null,
+          error: 'The password change could not be confirmed. Reload the vault list before unlocking or trying again. If the new password does not work, try the previous one.' })
+      }
+      // The request may have committed. Never retry with cached wrapper metadata.
+      return { patch: {} }
+    }
+    return { lock: true, patch: { loaded: true, vaults: vaults.map((item) => item.id === saved.id ? saved : item),
+      masterPasswordResult: 'Master password changed. Unlock your vault with the new password.' } }
+  })
 
   clearBackupPreview = () => {
     if (this.#state.busy) return

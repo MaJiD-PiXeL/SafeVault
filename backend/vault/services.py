@@ -47,6 +47,22 @@ def create_vault(*, user, vault_id, kdf_salt, wrap_nonce, wrapped_key):
     return vault
 
 
+@transaction.atomic
+def change_master_password(*, user, vault_id, expected_kdf_salt, expected_wrap_nonce,
+                           expected_wrapped_key, kdf_salt, wrap_nonce, wrapped_key):
+    """Replace only the client-produced wrapper, provided it has not changed."""
+    _require_user(user)
+    vault = Vault.objects.for_user(user).select_for_update().get(pk=vault_id)
+    if (vault.kdf_salt, vault.wrap_nonce, vault.wrapped_key) != (
+            expected_kdf_salt, expected_wrap_nonce, expected_wrapped_key):
+        raise RevisionConflict("The vault key wrapper changed. Reload before trying again.")
+    if kdf_salt == vault.kdf_salt or wrap_nonce == vault.wrap_nonce or wrapped_key == vault.wrapped_key:
+        raise ValidationError("A fresh salt, nonce and wrapped key are required.")
+    vault.kdf_salt, vault.wrap_nonce, vault.wrapped_key = kdf_salt, wrap_nonce, wrapped_key
+    vault.save(update_fields=["kdf_salt", "wrap_nonce", "wrapped_key", "updated_at"])
+    return vault
+
+
 def list_entries(*, user, vault_id, state="active"):
     _require_user(user)
     vault = Vault.objects.for_user(user).get(pk=vault_id)
