@@ -23,11 +23,22 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 
+def secret_setting(name):
+    value = os.getenv(name, "")
+    filename = os.getenv(f"{name}_FILE")
+    if not filename:
+        return value
+    if value:
+        raise RuntimeError(f"Set either {name} or {name}_FILE.")
+    return Path(filename).read_text(encoding="utf-8").rstrip("\r\n")
+
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "")
+SECRET_KEY = secret_setting("DJANGO_SECRET_KEY")
 
 DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() == "true"
 ENVIRONMENT = os.getenv("DJANGO_ENV", "development").strip().lower()
@@ -103,7 +114,7 @@ DATABASES = {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": os.getenv("DB_NAME", "safevault"),
         "USER": os.getenv("DB_USER", ""),
-        "PASSWORD": os.getenv("DB_PASSWORD", ""),
+        "PASSWORD": secret_setting("DB_PASSWORD"),
         "HOST": os.getenv("DB_HOST", "127.0.0.1"),
         "PORT": os.getenv("DB_PORT", "5432"),
         "OPTIONS": {"connect_timeout": 5},
@@ -155,11 +166,15 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
+ACCOUNT_LINK_ORIGIN = os.getenv("DJANGO_ACCOUNT_LINK_ORIGIN", "" if PRODUCTION else "http://127.0.0.1:5173").strip()
+DEFAULT_FROM_EMAIL = os.getenv("DJANGO_FROM_EMAIL", "SafeVault <no-reply@localhost>")
+PASSWORD_RESET_TIMEOUT = 1800
 MAILERS = {
     'default': {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
@@ -173,7 +188,7 @@ if PRODUCTION:
                 'host': os.getenv('DJANGO_SMTP_HOST', ''),
                 'port': int(os.getenv('DJANGO_SMTP_PORT', '587')),
                 'username': os.getenv('DJANGO_SMTP_USERNAME', ''),
-                'password': os.getenv('DJANGO_SMTP_PASSWORD', ''),
+                'password': secret_setting("DJANGO_SMTP_PASSWORD"),
                 'use_tls': True,
                 'timeout': 10,
             },
@@ -227,5 +242,10 @@ AXES_ALLOWED_CORS_ORIGINS = CORS_ALLOWED_ORIGINS
 AXES_ENABLE_RETRY_AFTER_HEADER = True
 
 # Extra budgets cap all requests, including malformed bodies and registrations.
-AUTH_REQUEST_LIMITS = {"login": (30, 60), "register": (5, 3600), "restore": (6, 3600)}
+AUTH_REQUEST_LIMITS = {
+    "login": (30, 60), "register": (5, 3600), "restore": (6, 3600),
+    "recovery-enroll": (20, 3600), "recovery-enroll-user": (5, 3600), "recovery-enroll-email": (5, 3600),
+    "recovery-request": (10, 3600), "recovery-request-user": (3, 3600),
+    "recovery-confirm": (30, 3600),
+}
 DATA_UPLOAD_MAX_MEMORY_SIZE = 128 * 1024

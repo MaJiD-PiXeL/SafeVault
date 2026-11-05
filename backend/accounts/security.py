@@ -12,19 +12,23 @@ from .models import AuthRequestWindow
 
 
 def client_ip(request):
-    # Forwarded headers are untrusted. A production proxy must set REMOTE_ADDR
-    # from its own verified peer chain before the request reaches Django.
+    peer = request.META.get("REMOTE_ADDR", "")
+    # Gunicorn leaves REMOTE_ADDR empty on the private Unix socket. The bundled
+    # Caddy proxy replaces this header with its immediate connection peer.
+    if not peer and getattr(settings, "TRUST_UNIX_PROXY", False):
+        peer = request.META.get("HTTP_X_SAFEVAULT_CLIENT_IP", "")
     try:
-        return ip_address(request.META.get("REMOTE_ADDR", "")).compressed
+        return ip_address(peer).compressed
     except ValueError:
         return "0.0.0.0"
 
 
-def limit_requests(request, scope):
+def limit_requests(request, scope, *, subject=None):
     limit, seconds = settings.AUTH_REQUEST_LIMITS[scope]
     now = int(timezone.now().timestamp())
     window = now // seconds
-    key = salted_hmac("velnar.auth.request.v1", f"{scope}:{client_ip(request)}:{window}", algorithm="sha256").hexdigest()
+    identifier = client_ip(request) if subject is None else subject
+    key = salted_hmac("velnar.auth.request.v1", f"{scope}:{identifier}:{window}", algorithm="sha256").hexdigest()
     expires_at = datetime.fromtimestamp((window + 1) * seconds, tz=datetime_timezone.utc)
     AuthRequestWindow.objects.get_or_create(key=key, defaults={"expires_at": expires_at})
     # A single conditional UPDATE is atomic even across application workers.

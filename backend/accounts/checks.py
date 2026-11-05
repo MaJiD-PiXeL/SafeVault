@@ -1,8 +1,11 @@
 """Additional deployment checks; diagnostics never include configuration values."""
+from email.utils import parseaddr
 from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.core.checks import Error, Tags, register
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 
 
 def secure_origin(origin):
@@ -11,14 +14,27 @@ def secure_origin(origin):
         port = parsed.port
         return (
             parsed.scheme == "https" and bool(parsed.hostname)
+            and parsed.geturl() == origin and "\\" not in origin
+            and not any(character.isspace() for character in origin)
             and "*" not in parsed.hostname
             and parsed.hostname.lower() not in {"localhost", "127.0.0.1", "::1"}
-            and not parsed.username and not parsed.password
+            and parsed.username is None and parsed.password is None
             and not parsed.path and not parsed.query and not parsed.fragment
             and (port is None or 1 <= port <= 65535)
         )
     except (ValueError, TypeError):
         return False
+
+
+def valid_sender(sender):
+    if "\r" in sender or "\n" in sender:
+        return False
+    _, address = parseaddr(sender)
+    try:
+        validate_email(address)
+    except ValidationError:
+        return False
+    return address.rsplit("@", 1)[-1].lower() != "localhost"
 
 
 @register(Tags.security, deploy=True)
@@ -39,4 +55,8 @@ def production_configuration(app_configs, **kwargs):
     mailer = settings.MAILERS.get("default", {})
     if mailer.get("BACKEND") == "django.core.mail.backends.smtp.EmailBackend" and not mailer.get("OPTIONS", {}).get("host", "").strip():
         errors.append(Error("Set DJANGO_SMTP_HOST for production email delivery.", id="safevault.E006"))
+    if not secure_origin(settings.ACCOUNT_LINK_ORIGIN):
+        errors.append(Error("Set DJANGO_ACCOUNT_LINK_ORIGIN to the public HTTPS frontend origin.", id="safevault.E007"))
+    if not valid_sender(settings.DEFAULT_FROM_EMAIL):
+        errors.append(Error("Set DJANGO_FROM_EMAIL to a sender address accepted by the mail provider.", id="safevault.E008"))
     return errors

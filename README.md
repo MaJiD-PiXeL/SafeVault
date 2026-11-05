@@ -57,7 +57,7 @@ backend/.venv/Scripts/python.exe -B backend/manage.py check
 backend/.venv/Scripts/python.exe -B backend/manage.py test accounts vault --settings=config.test_settings -v 2
 ```
 
-The SQLite in-memory suite skips the five PostgreSQL concurrency tests.
+The SQLite in-memory suite skips the six PostgreSQL concurrency tests.
 To run all backend tests on PostgreSQL, use the explicit integration settings:
 
 ```powershell
@@ -99,6 +99,12 @@ sign out, or revoke another browser's session. Use the same hostname consistentl
 The account password is separate from the vault master password. No vault or
 real password entry is created during account registration.
 
+In **Account → Recovery email**, enter your current account password and verify
+your email address. **Forgot your account password?** requests a reset link by
+username. Run the [account recovery mail worker](docs/authentication.md#recovery-email-and-account-password-reset)
+for queued messages. The reset returns you to sign-in. Open the vault with your
+master password after signing in.
+
 Open **All Passwords** after signing in to create or unlock your vault. All entry
 fields are encrypted before upload. Security Center configures auto-lock, which
 is enforced in the client. See [Phase 3 implementation and limits](docs/phase3-web-vault.md).
@@ -115,6 +121,12 @@ live review counts; the generator supports configurable character groups and
 the entry list supports sorting and clearing filters. See
 [local password health](docs/password-health.md). Before deployment, run the
 [production configuration checks](docs/deployment-checks.md).
+For a hosted beta, use the [Linux Compose deployment guide](docs/compose-deployment.md).
+
+**Secure Notes** and **Payment Cards** store encrypted notes, cardholder names,
+card numbers and expiry dates. Unlocked vaults refresh changes from other
+devices. Use **Offline Backup** to read a downloaded encrypted archive with its
+backup password. [Backup and recovery guide](docs/backups.md)
 
 Open **Security Center → Change master password** while unlocked to replace
 the vault's master password. The current password is checked locally; entries
@@ -128,8 +140,9 @@ counts toward vault capacity. New backups include active entries only. Apply the
 additive backend migration before using this frontend; see
 [Trash behavior and API compatibility](docs/trash.md).
 
-This is not a production-ready password manager: independent audit, offline
-access, recovery/key rotation and robust cross-device sync remain outstanding.
+Public release requires an independent security audit and hosted deployment
+validation. Data-key rotation, recovery keys and offline editing remain
+outstanding.
 Use synthetic test entries. Existing CLI files, Fernet data and legacy databases
 have not been migrated or removed. The local `backend/.env` remains untracked
 and ignored; its historical Git copies have not been removed.

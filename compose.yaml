@@ -1,0 +1,121 @@
+name: safevault
+
+x-backend: &backend
+  image: safevault-backend:local
+  build:
+    context: .
+    target: backend
+  init: true
+  environment:
+    DJANGO_SETTINGS_MODULE: config.socket_settings
+    DJANGO_ENV: production
+    DJANGO_SECRET_KEY_FILE: /run/secrets/django-key
+    DJANGO_ALLOWED_HOSTS: ${VAULT_HOST:?Set VAULT_HOST to the HTTPS frontend hostname}
+    DJANGO_ACCOUNT_LINK_ORIGIN: https://${VAULT_HOST}
+    DJANGO_FROM_EMAIL: ${VAULT_FROM_EMAIL:?Set VAULT_FROM_EMAIL to the verified sender}
+    DJANGO_SMTP_HOST: ${VAULT_SMTP_HOST:?Set VAULT_SMTP_HOST}
+    DJANGO_SMTP_PORT: ${VAULT_SMTP_PORT:-587}
+    DJANGO_SMTP_USERNAME: ${VAULT_SMTP_USERNAME:-}
+    DJANGO_SMTP_PASSWORD_FILE: /run/secrets/smtp-password
+    DB_NAME: safevault
+    DB_USER: safevault
+    DB_PASSWORD_FILE: /run/secrets/database-password
+    DB_HOST: db
+  secrets:
+    - django-key
+    - database-password
+    - smtp-password
+  networks:
+    - storage
+    - outbound
+
+services:
+  db:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-admin-password
+    secrets:
+      - postgres-admin-password
+      - database-password
+    volumes:
+      - database:/var/lib/postgresql/data
+      - ./deploy/init-db.sh:/docker-entrypoint-initdb.d/10-safevault.sh:ro
+    networks: [storage]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "safevault", "-d", "safevault"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+
+  migrate:
+    <<: *backend
+    command: ["/bin/sh", "-ec", "python manage.py check --deploy --fail-level ERROR && python manage.py migrate --noinput"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *backend
+    restart: unless-stopped
+    volumes:
+      - api-socket:/run/safevault
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "/opt/safevault/ready.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  worker:
+    <<: *backend
+    restart: unless-stopped
+    command: ["/bin/sh", "/opt/safevault/worker.sh"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  edge:
+    image: safevault-edge:local
+    build:
+      context: .
+      target: edge
+    restart: unless-stopped
+    environment:
+      VAULT_HOST: ${VAULT_HOST}
+    ports:
+      - "${VAULT_BIND_ADDRESS:-127.0.0.1}:80:80"
+      - "${VAULT_BIND_ADDRESS:-127.0.0.1}:443:443"
+    volumes:
+      - api-socket:/run/safevault:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [edge]
+
+volumes:
+  database:
+  api-socket:
+  caddy-data:
+  caddy-config:
+
+networks:
+  storage:
+    internal: true
+  outbound:
+  edge:
+
+secrets:
+  django-key:
+    file: ./deploy/secrets/django-key
+  postgres-admin-password:
+    file: ./deploy/secrets/postgres-admin-password
+  database-password:
+    file: ./deploy/secrets/database-password
+  smtp-password:
+    file: ./deploy/secrets/smtp-password

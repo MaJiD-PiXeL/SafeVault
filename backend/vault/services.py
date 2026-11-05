@@ -1,4 +1,6 @@
 """Owner-scoped persistence boundary; HTTP/auth and decryption are separate phases."""
+import uuid
+
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -89,6 +91,11 @@ def _check_versions(entry, expected_revision, expected_state_version):
         raise RevisionConflict("The entry changed. Refresh before trying again.")
 
 
+def _change_entries_version(vault_id):
+    # Every entry write holds the vault row lock and commits this token with its rows.
+    Vault.objects.filter(pk=vault_id).update(entries_version=uuid.uuid4())
+
+
 @transaction.atomic
 def create_entry(*, user, vault_id, entry_id, nonce, ciphertext):
     _require_user(user)
@@ -101,6 +108,7 @@ def create_entry(*, user, vault_id, entry_id, nonce, ciphertext):
     _check_capacity(vault, 1, len(entry.ciphertext))
     NonceReservation.objects.create(vault=vault, nonce=nonce)
     entry.save(force_insert=True)
+    _change_entries_version(vault_id)
     return entry
 
 
@@ -121,6 +129,7 @@ def update_entry(*, user, entry_id, expected_revision, nonce, ciphertext, expect
     _check_capacity(entry.vault, 1, len(entry.ciphertext), exclude_id=entry.pk)
     NonceReservation.objects.create(vault=entry.vault, nonce=nonce)
     entry.save(update_fields=["nonce", "ciphertext", "revision", "updated_at"])
+    _change_entries_version(entry.vault_id)
     return entry
 
 
@@ -135,6 +144,7 @@ def delete_entry(*, user, entry_id, expected_revision, expected_state_version=1)
     entry.deleted_at = timezone.now()
     entry.state_version += 1
     entry.save(update_fields=["deleted_at", "state_version", "updated_at"])
+    _change_entries_version(entry.vault_id)
     return entry
 
 
@@ -148,6 +158,7 @@ def restore_entry(*, user, entry_id, expected_revision, expected_state_version):
     entry.deleted_at = None
     entry.state_version += 1
     entry.save(update_fields=["deleted_at", "state_version", "updated_at"])
+    _change_entries_version(entry.vault_id)
     return entry
 
 
@@ -160,6 +171,7 @@ def purge_entry(*, user, entry_id, expected_revision, expected_state_version):
         raise RevisionConflict("Only entries in Trash can be permanently deleted.")
     # Nonce reservations and backup restore receipts deliberately survive purge.
     entry.delete()
+    _change_entries_version(entry.vault_id)
 
 
 @transaction.atomic
@@ -188,4 +200,5 @@ def restore_entries(*, user, vault_id, backup_id, archive_digest, entries):
     NonceReservation.objects.bulk_create([NonceReservation(vault=vault, nonce=row.nonce) for row in rows], batch_size=100)
     VaultEntry.objects.bulk_create(rows, batch_size=100)
     receipt = RestoreReceipt.objects.create(vault=vault, backup_id=backup_id, archive_digest=archive_digest, entry_count=len(rows))
+    _change_entries_version(vault_id)
     return receipt, False

@@ -60,12 +60,24 @@ class EntryPagination(PageNumberPagination):
     page_size = 50
 
 
+class EntriesVersionView(VaultAPIView):
+    def get(self, request, vault_id):
+        vault = Vault.objects.for_user(request.user).only("entries_version").get(pk=vault_id)
+        return Response({"version": str(vault.entries_version)})
+
+
 class EntriesView(VaultAPIView):
     def get(self, request, vault_id):
+        owned = Vault.objects.for_user(request.user).only("entries_version")
+        version = owned.get(pk=vault_id).entries_version
         entries = list_entries(user=request.user, vault_id=vault_id, state=request.query_params.get("state", "active"))
         paginator = EntryPagination()
         page = paginator.paginate_queryset(entries, request)
-        return paginator.get_paginated_response(EntrySerializer(page, many=True).data)
+        response = paginator.get_paginated_response(EntrySerializer(page, many=True).data)
+        if version != owned.get(pk=vault_id).entries_version:
+            raise Conflict("The vault changed while loading. Refresh to try again.")
+        response.data["version"] = str(version)
+        return response
 
     def post(self, request, vault_id):
         # Scope ownership before examining another account's identifiers.

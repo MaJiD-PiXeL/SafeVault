@@ -37,6 +37,7 @@ class Vault(ValidatedModel):
     kdf_salt = models.CharField(max_length=24, validators=[Base64Bytes(16, 16)])
     wrap_nonce = models.CharField(max_length=16, validators=[Base64Bytes(12, 12)])
     wrapped_key = models.CharField(max_length=64, validators=[Base64Bytes(48, 48)])
+    entries_version = models.UUIDField(default=uuid.uuid4, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

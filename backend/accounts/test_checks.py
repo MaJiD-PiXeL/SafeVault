@@ -1,11 +1,28 @@
 from django.core.checks import Tags, run_checks
-from django.test import SimpleTestCase, override_settings
+from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from .checks import production_configuration, secure_origin
+from .security import client_ip
+
+
+class ProxyClientIPTests(SimpleTestCase):
+    def test_client_ip_header_only_applies_to_the_bundled_unix_proxy(self):
+        factory = RequestFactory()
+        request = factory.get("/", REMOTE_ADDR="", HTTP_X_SAFEVAULT_CLIENT_IP="192.0.2.2")
+        self.assertEqual(client_ip(request), "0.0.0.0")
+        with override_settings(TRUST_UNIX_PROXY=True):
+            self.assertEqual(client_ip(request), "192.0.2.2")
+            request.META["REMOTE_ADDR"] = "192.0.2.3"
+            self.assertEqual(client_ip(request), "192.0.2.3")
+            request.META["REMOTE_ADDR"] = ""
+            request.META["HTTP_X_SAFEVAULT_CLIENT_IP"] = "192.0.2.2, 192.0.2.4"
+            self.assertEqual(client_ip(request), "0.0.0.0")
 
 
 @override_settings(
     PRODUCTION=True, DEBUG=False, ALLOWED_HOSTS=["vault.example.com"],
+    ACCOUNT_LINK_ORIGIN="https://vault.example.com",
+    DEFAULT_FROM_EMAIL="SafeVault <no-reply@vault.example.com>",
     CORS_ALLOWED_ORIGINS=[], CSRF_TRUSTED_ORIGINS=[],
     SESSION_COOKIE_SECURE=True, CSRF_COOKIE_SECURE=True, SECURE_SSL_REDIRECT=True,
     MAILERS={"default": {"BACKEND": "django.core.mail.backends.smtp.EmailBackend", "OPTIONS": {"host": "smtp.example.com", "use_tls": True}}},
@@ -33,6 +50,8 @@ class DeploymentCheckTests(SimpleTestCase):
             ({"CSRF_COOKIE_SECURE": False}, "safevault.E005"),
             ({"SECURE_SSL_REDIRECT": False}, "safevault.E005"),
             ({"DEBUG": True}, "safevault.E005"),
+            ({"ACCOUNT_LINK_ORIGIN": "http://vault.example.com"}, "safevault.E007"),
+            ({"DEFAULT_FROM_EMAIL": "SafeVault <no-reply@localhost>"}, "safevault.E008"),
             ({"MAILERS": {"default": {"BACKEND": "django.core.mail.backends.smtp.EmailBackend", "OPTIONS": {"host": " "}}}}, "safevault.E006"),
         ]:
             with self.subTest(code=code, changes=changes), override_settings(**changes):

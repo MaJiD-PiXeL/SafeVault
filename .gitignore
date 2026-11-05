@@ -10,4 +10,5 @@ data/*.db
 node_modules/
 dist/
 *.tsbuildinfo
+deploy/secrets/
 
