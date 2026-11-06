@@ -140,9 +140,22 @@ Master-password rewrapping is now available in Security Center; see
 [the change protocol and its limits](master-password.md). Each unlock fetches
 current vault metadata, and successful password changes lock the client.
 
-Independent audit, recovery/data-key rotation, rollback detection, offline
-storage, conflict-aware device sync, large-vault streaming, attachments/secure
-notes/card schemas and production hardening remain future work. No legacy data
+Secure Notes and Payment Cards use a typed version 2 entry payload inside the
+existing encrypted envelope. Card lists display the last four digits. Passwords
+retain their version 1 payload. Backups support both versions.
+
+The offline reader opens downloaded encrypted backups in read-only mode.
+Production builds cache the public app shell to make the reader available after
+an offline reload.
+
+Unlocked clients poll the vault's entry version and refresh the encrypted
+snapshot when it changes. All pages must share a version. A stale editor can
+save its draft as a new copy, and edits to the original still require matching
+entry versions. The sync path covers active and trashed records.
+
+Independent audit, vault-key recovery/data-key rotation, rollback detection,
+offline editing, large-vault streaming, attachments and
+production hardening remain future work. No legacy data
 migration or scheduled cleanup/sync is introduced. Use synthetic test entries.
 
 References: [hash-wasm API](https://github.com/Daninet/hash-wasm),

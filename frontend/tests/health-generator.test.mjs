@@ -4,7 +4,7 @@ import { analyzePasswords, passwordWarnings } from '../src/vault/health.ts'
 import { generatePassword } from '../src/vault/generator.ts'
 
 function entry(id, password) {
-  return { envelope: { id }, data: { password } }
+  return { envelope: { id }, data: { schema_version: 1, password } }
 }
 
 test('health finds exact reuse, counts overlapping entries once, and returns no passwords', () => {

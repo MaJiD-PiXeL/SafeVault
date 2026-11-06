@@ -13,6 +13,7 @@ export async function checkHealth(signal: AbortSignal, baseUrl = import.meta.env
 export type AccountUser = { id: number; username: string }
 export type AccountSession = { user: AccountUser | null; csrfToken: string }
 export type DeviceSession = { id: string; createdAt: string; expiresAt: string; current: boolean }
+export type RecoveryEmail = { email: string | null; verified: boolean }
 
 export class ApiError extends Error {
   status: number
@@ -109,6 +110,26 @@ export function createAccountApi(baseUrl = import.meta.env?.VITE_API_BASE_URL ??
     async revokeSession(id: string) {
       if (!/^[0-9a-f-]{36}$/.test(id)) throw new ApiError('Invalid session identifier.', 400)
       await request(`sessions/${id}`, 'DELETE')
+    },
+    async recoveryEmail(signal?: AbortSignal): Promise<RecoveryEmail> {
+      const data = await request('recovery/email', 'GET', undefined, signal)
+      if (!isObject(data) || (data.email !== null && typeof data.email !== 'string') ||
+          typeof data.verified !== 'boolean' || (data.verified && !data.email)) {
+        throw new ApiError('Unexpected recovery email response.', 502)
+      }
+      return { email: data.email, verified: data.verified }
+    },
+    async enrollRecoveryEmail(email: string, password: string) {
+      await request('recovery/email', 'POST', { email, password }, undefined, 'auth', 20000)
+    },
+    async requestPasswordReset(username: string) {
+      await request('recovery/request', 'POST', { username })
+    },
+    async verifyRecoveryEmail(username: string, token: string) {
+      await request('recovery/verify', 'POST', { username, token })
+    },
+    async resetAccountPassword(username: string, token: string, password: string) {
+      await request('recovery/reset', 'POST', { username, token, password })
     },
   }
 }

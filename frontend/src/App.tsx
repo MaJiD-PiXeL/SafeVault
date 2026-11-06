@@ -30,15 +30,19 @@ import './index.css'
 import { BRAND } from './brand'
 import { checkHealth } from './api'
 import AccountPanel from './AccountPanel'
+import { AccountLinkPanel } from './AccountRecovery'
+import { takeAccountLink } from './accountLink'
 import { useAccount } from './useAccount'
 import { useVault } from './vault/useVault'
-import type { UnlockedEntry } from './vault/format'
+import { ENTRY_LABELS, entryKind, entrySummary } from './vault/format'
+import type { EntryKind, UnlockedEntry } from './vault/format'
 import VaultAccess from './vault/VaultAccess'
 import EntryDialog from './vault/EntryDialog'
 import GeneratorPanel from './vault/GeneratorPanel'
 import SecurityPanel from './vault/SecurityPanel'
 import MasterPasswordPanel from './vault/MasterPasswordPanel'
 import BackupPanel from './vault/BackupPanel'
+import OfflineBackupPanel from './vault/OfflineBackupPanel'
 import HealthPanel from './vault/HealthPanel'
 import { analyzePasswords } from './vault/health'
 import TrashPanel from './vault/TrashPanel'
@@ -91,10 +95,12 @@ const navigation = [
   { label: 'Trash', icon: Trash2, count: '—' },
 ]
 
-function App() {
+function App({ initialAccountLink }: { initialAccountLink: ReturnType<typeof takeAccountLink> }) {
   const account = useAccount()
   const vault = useVault(account.user?.id ?? null, account.status === 'ready')
-  const [activePage, setActivePage] = useState('Overview')
+  const [activePage, setActivePage] = useState(initialAccountLink ? 'Account' : 'Overview')
+  const [accountLink, setAccountLink] = useState(initialAccountLink?.valid ? initialAccountLink.link : null)
+  const [accountLinkNotice, setAccountLinkNotice] = useState(initialAccountLink?.valid === false ? 'This account email link is invalid.' : '')
   const [search, setSearch] = useState('')
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [editingEntry, setEditingEntry] = useState<UnlockedEntry | null>(null)
@@ -104,6 +110,18 @@ function App() {
   const [apiError, setApiError] = useState(false)
   const dialogRef = useRef<HTMLDialogElement>(null)
   const health = useMemo(() => analyzePasswords(vault.entries), [vault.entries])
+
+  useEffect(() => {
+    function openAccountLink() {
+      const result = takeAccountLink()
+      if (!result) return
+      setAccountLink(result.valid ? result.link : null)
+      setAccountLinkNotice(result.valid ? '' : 'This account email link is invalid.')
+      setActivePage('Account')
+    }
+    window.addEventListener('hashchange', openAccountLink)
+    return () => window.removeEventListener('hashchange', openAccountLink)
+  }, [])
 
   useEffect(() => {
     if (showAddDialog && !vault.unlocked) dialogRef.current?.showModal()
@@ -149,23 +167,36 @@ function App() {
     }
   }, [])
 
-  const accounts: (typeof demoAccounts[number] & { id: string; record?: UnlockedEntry })[] = account.user
-    ? vault.entries.map((entry) => ({ id: entry.envelope.id, record: entry, name: entry.data.title,
-      username: entry.data.username, domain: entry.data.website, category: entry.data.category,
-      favorite: entry.data.favorite, icon: entry.data.title.slice(0, 2).toUpperCase(), color: '#60a5fa' }))
-    : demoAccounts.map((entry) => ({ ...entry, id: entry.name }))
+  const collectionPage = ['Overview', 'All Passwords', 'Favorites', 'Secure Notes', 'Payment Cards'].includes(activePage)
+  const pageKind: EntryKind | null = activePage === 'Secure Notes' ? 'note' :
+    activePage === 'Payment Cards' ? 'card' : activePage === 'All Passwords' ? 'password' : null
+  const accounts: (typeof demoAccounts[number] & { id: string; kind: EntryKind; record?: UnlockedEntry })[] = account.user
+    ? vault.entries.map((entry) => {
+      const summary = entrySummary(entry.data)
+      return { id: entry.envelope.id, record: entry, kind: entryKind(entry.data), name: entry.data.title,
+        username: summary.primary, domain: summary.secondary, category: entry.data.category,
+        favorite: entry.data.favorite, icon: entry.data.title.slice(0, 2).toUpperCase(), color: '#60a5fa' }
+    })
+    : demoAccounts.map((entry) => ({ ...entry, id: entry.name, kind: 'password' }))
+  const pageAccounts = accounts.filter((entry) => !pageKind || entry.kind === pageKind)
+  const categories = [...new Set(pageAccounts.map((item) => item.category).filter(Boolean))].sort()
+  const pageCategory = categories.includes(category) ? category : ''
+  const addLabel = `Add ${ENTRY_LABELS[pageKind ?? 'password']}`
 
   function addItem() {
-    if (account.user && !vault.unlocked) { setActivePage('All Passwords'); return }
+    if (account.user && !vault.unlocked) {
+      if (!collectionPage) setActivePage('All Passwords')
+      return
+    }
     setEditingEntry(null)
     setShowAddDialog(true)
   }
 
-  const filteredAccounts = accounts.filter((account) => {
+  const filteredAccounts = pageAccounts.filter((account) => {
     const query = search.trim().toLowerCase()
 
     if (activePage === 'Favorites' && !account.favorite) return false
-    if (category && account.category !== category) return false
+    if (pageCategory && account.category !== pageCategory) return false
 
     return (
       account.name.toLowerCase().includes(query) ||
@@ -227,7 +258,7 @@ function App() {
 
                   {item.count && (
                     <span className="text-[10px] text-slate-600">
-                      {account.user ? (vault.unlocked ? String(item.label === 'Trash' ? vault.trash.length : accounts.length) : '—') : item.count}
+                      {account.user ? (vault.unlocked ? String(item.label === 'Trash' ? vault.trash.length : health.total) : '—') : item.count}
                     </span>
                   )}
                 </button>
@@ -265,6 +296,7 @@ function App() {
             Password Generator
           </button>
           <button onClick={() => setActivePage('Backups')} className={`mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-[12px] transition ${activePage === 'Backups' ? 'nav-selected' : 'text-slate-500 hover:bg-white/[0.035] hover:text-slate-200'}`}><FolderLock size={16} />Backups</button>
+          <button onClick={() => setActivePage('Offline Backup')} className={`mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-[12px] transition ${activePage === 'Offline Backup' ? 'nav-selected' : 'text-slate-500 hover:bg-white/[0.035] hover:text-slate-200'}`}><FolderLock size={16} />Offline Backup</button>
         </div>
 
         <div className="mt-auto p-5">
@@ -371,7 +403,7 @@ function App() {
           <label className="mb-6 block text-sm text-slate-400 lg:hidden">
             Navigate
             <select value={activePage} onChange={(event) => setActivePage(event.target.value)} className="ml-3 rounded-lg border border-white/10 bg-vault-surface p-2">
-              {[...navigation.map((item) => item.label), 'Security Center', 'Password Generator', 'Backups', 'Account', 'Settings', 'Help'].map((page) => <option key={page}>{page}</option>)}
+              {[...navigation.map((item) => item.label), 'Security Center', 'Password Generator', 'Backups', 'Offline Backup', 'Account', 'Settings', 'Help'].map((page) => <option key={page}>{page}</option>)}
             </select>
           </label>
           <div className="workspace-banner flex flex-col justify-between gap-6 rounded-2xl p-6 sm:flex-row sm:items-center sm:p-8">
@@ -402,7 +434,7 @@ function App() {
             </div>
           </div>
 
-          {['Overview', 'All Passwords', 'Favorites'].includes(activePage) ? (account.user && !vault.unlocked ?
+          {collectionPage ? (account.user && !vault.unlocked ?
             <VaultAccess key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} /> : <>
           {account.user && <div className="mt-7 rounded-xl border border-blue-400/15 bg-blue-500/5 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3"><span className="text-xs text-blue-200">Vault unlocked on this device</span><div className="flex gap-3"><button disabled={vault.busy} onClick={() => void vault.controller.refresh()} className="text-xs text-slate-300 disabled:opacity-50">Refresh entries</button><button onClick={vault.controller.lock} className="rounded-lg border border-blue-400/25 px-3 py-2 text-xs text-blue-200">Lock vault</button></div></div>
@@ -451,12 +483,12 @@ function App() {
                     {activePage === 'Overview' ? 'Recent Items' : activePage}
                   </h2>
                   <p className="mt-1.5 text-[10px] text-slate-600">
-                    {account.user ? 'Your most recently updated entries' : 'Sample accounts'}
+                    {account.user ? 'Your most recently updated entries' : pageAccounts.length ? 'Sample accounts' : 'Sign in to view your encrypted entries'}
                   </p>
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <select aria-label="Filter category" value={category} onChange={(event) => setCategory(event.target.value)} className="min-w-0 max-w-32 rounded-lg border border-white/10 bg-vault-surface px-2 text-[11px] text-slate-300"><option value="">All categories</option>{[...new Set(accounts.map((item) => item.category).filter(Boolean))].sort().map((value) => <option key={value} value={value}>{value}</option>)}</select>
+                  <select aria-label="Filter category" value={pageCategory} onChange={(event) => setCategory(event.target.value)} className="min-w-0 max-w-32 rounded-lg border border-white/10 bg-vault-surface px-2 text-[11px] text-slate-300"><option value="">All categories</option>{categories.map((value) => <option key={value} value={value}>{value}</option>)}</select>
                   <select aria-label="Sort entries" value={sort} onChange={(event) => setSort(event.target.value)} className="min-w-0 rounded-lg border border-white/10 bg-vault-surface px-2 py-2 text-[11px] text-slate-300"><option value="recent">Recently updated</option><option value="title">Title A–Z</option></select>
                   <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-white/[0.07] bg-black/20 px-3 sm:w-52">
                     <Search size={14} className="shrink-0 text-slate-600" />
@@ -471,18 +503,18 @@ function App() {
                   </div>
 
                   <button
-                    onClick={() => { setActivePage('All Passwords'); setSearch(''); setCategory('') }}
+                    onClick={() => { setSearch(''); setCategory('') }}
                     className="rounded-lg border border-white/[0.07] px-3 text-[10px] text-slate-400 transition hover:bg-white/[0.04]"
                   >
-                    View all
+                    Clear filters
                   </button>
                 </div>
               </div>
 
               <div className="hidden grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(0,1fr)_35px] gap-4 border-b border-white/[0.05] px-6 py-3 text-[9px] uppercase tracking-[0.13em] text-slate-600 sm:grid">
                 <span>Item</span>
-                <span>Username</span>
-                <span>Website</span>
+                <span>{pageKind === 'password' ? 'Username' : pageKind === 'card' ? 'Cardholder' : 'Details'}</span>
+                <span>{pageKind === 'password' ? 'Website' : pageKind === 'card' ? 'Card ending' : 'Reference'}</span>
                 <span />
               </div>
 
@@ -518,21 +550,21 @@ function App() {
 
                     <div className="min-w-0">
                       <div className="text-[9px] text-slate-600 sm:hidden">
-                        USERNAME
+                        {account.kind === 'password' ? 'USERNAME' : account.kind === 'card' ? 'CARDHOLDER' : 'TYPE'}
                       </div>
                       <div className="mt-1 truncate text-[11px] text-slate-400 sm:mt-0">
                         {account.username}
                       </div>
                     </div>
 
-                    <div className="flex min-w-0 items-center gap-2">
-                      <Globe
+                    <div className={`min-w-0 items-center gap-2 ${account.domain ? 'flex' : 'hidden sm:flex'}`}>
+                      {account.kind === 'password' && account.domain && <Globe
                         size={13}
                         className="hidden shrink-0 text-slate-600 sm:block"
-                      />
+                      />}
                       <div className="min-w-0">
                         <div className="text-[9px] text-slate-600 sm:hidden">
-                          WEBSITE
+                          {account.kind === 'card' ? 'CARD ENDING' : 'WEBSITE'}
                         </div>
                         <div className="mt-1 truncate text-[11px] text-slate-500 sm:mt-0">
                           {account.domain}
@@ -554,8 +586,9 @@ function App() {
 
                 {filteredAccounts.length === 0 && (
                   <div className="px-6 py-12 text-center text-[12px] text-slate-500">
-                    <p>{accounts.length === 0 ? 'Your vault is ready. Add your first password.' : 'No matching items found.'}</p>
-                    {accounts.length === 0 ? <button onClick={addItem} className="brand-primary mt-4 rounded-lg px-4 py-2">Add password</button> : <button onClick={() => { setSearch(''); setCategory(''); setActivePage('All Passwords') }} className="mt-4 rounded-lg border border-white/15 px-4 py-2 text-slate-200">Clear filters and view all</button>}
+                    <p>{pageAccounts.length ? 'No matching items found.' : account.user ? 'There are no entries here yet.' : 'Sign in to open your vault.'}</p>
+                    {pageAccounts.length ? <button onClick={() => { setSearch(''); setCategory('') }} className="mt-4 rounded-lg border border-white/15 px-4 py-2 text-slate-200">Clear filters</button>
+                      : <button onClick={account.user ? addItem : () => setActivePage('Account')} className="brand-primary mt-4 rounded-lg px-4 py-2">{account.user ? addLabel : 'Sign in'}</button>}
                   </div>
                 )}
               </div>
@@ -660,9 +693,21 @@ function App() {
             </div>
           </section>
           </>) : ['Account', 'Settings'].includes(activePage) ? (
-            <AccountPanel key={account.user?.id ?? 'anonymous'} user={account.user} status={account.status} onUserChange={account.acceptUser} onRefresh={account.refresh} onLock={vault.controller.lock} />
+            accountLink ? <AccountLinkPanel key={accountLink.token} link={accountLink} onFinish={(notice) => {
+              if (notice && accountLink.action === 'reset') {
+                vault.controller.lock()
+                void account.refresh()
+              }
+              setAccountLink(null)
+              setAccountLinkNotice(notice ?? '')
+            }} /> : <>
+              {accountLinkNotice && <p role="status" className="mt-6 text-sm text-blue-300">{accountLinkNotice}</p>}
+              <AccountPanel key={account.user?.id ?? 'anonymous'} user={account.user} status={account.status} onUserChange={account.acceptUser} onRefresh={account.refresh} onLock={vault.controller.lock} />
+            </>
           ) : activePage === 'Backups' ? (
             !account.user ? <section className="mt-9 rounded-2xl border border-white/10 bg-vault-surface p-6"><h2 className="text-lg font-semibold">Encrypted backups</h2><p className="mt-3 text-sm text-slate-400">Sign in and unlock a vault to export or restore an encrypted backup.</p></section> : !vault.unlocked ? <VaultAccess key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} /> : <BackupPanel key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} />
+          ) : activePage === 'Offline Backup' ? (
+            <OfflineBackupPanel />
           ) : activePage === 'Trash' ? (
             !account.user ? <section className="mt-9 rounded-2xl border border-white/10 bg-vault-surface p-6"><h2 className="text-lg font-semibold">Encrypted Trash</h2><p className="mt-3 text-sm text-slate-400">Sign in and unlock your vault to restore deleted entries.</p></section> : !vault.unlocked ? <VaultAccess key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} /> : <TrashPanel key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} entries={vault.trash} />
           ) : activePage === 'Password Generator' ? (
@@ -698,7 +743,7 @@ function App() {
         </div>
       </main>
 
-          {vault.unlocked && showAddDialog && <EntryDialog key={editingEntry?.envelope.id ?? 'new'} controller={vault.controller} entry={editingEntry} onClose={() => { setShowAddDialog(false); setEditingEntry(null) }} />}
+          {vault.unlocked && showAddDialog && <EntryDialog key={editingEntry?.envelope.id ?? pageKind ?? 'password'} controller={vault.controller} entry={editingEntry} kind={pageKind ?? 'password'} onClose={() => { setShowAddDialog(false); setEditingEntry(null) }} />}
           {!vault.unlocked && <dialog
             ref={dialogRef}
             onCancel={() => setShowAddDialog(false)}

@@ -18,6 +18,8 @@ Ordinary development `check` and `runserver` remain available with local setting
 | `safevault.E004` | The same restrictions for trusted CSRF origins |
 | `safevault.E005` | DEBUG off, secure session/CSRF cookies, HTTPS redirects enabled |
 | `safevault.E006` | A configured SMTP host when the production SMTP backend is used |
+| `safevault.E007` | The public HTTPS frontend origin for recovery email links |
+| `safevault.E008` | A sender address for account emails in `DJANGO_FROM_EMAIL` |
 
 Django's built-in checks additionally cover weak/default secret keys, security
 middleware and other deployment protections. Diagnostics do not print configured
@@ -33,15 +35,17 @@ DJANGO_DEBUG=False
 DJANGO_ALLOWED_HOSTS=vault.example.com
 DJANGO_CORS_ALLOWED_ORIGINS=
 DJANGO_CSRF_TRUSTED_ORIGINS=
+DJANGO_ACCOUNT_LINK_ORIGIN=https://vault.example.com
+DJANGO_FROM_EMAIL="SafeVault <no-reply@vault.example.com>"
 DJANGO_SMTP_HOST=smtp.example.com
 DJANGO_SMTP_PORT=587
 DJANGO_SMTP_USERNAME=your-deployment-mailbox
 ```
 
 Supply `DJANGO_SMTP_PASSWORD` through the secret store too. Production now uses
-SMTP with STARTTLS and a ten-second timeout; development keeps console email.
-This configures delivery only and does not add account recovery/email verification.
-No email is sent by deployment checks.
+SMTP with STARTTLS and a ten-second timeout. Development uses the console
+mailer. Schedule the [account recovery mail worker](authentication.md#recovery-email-and-account-password-reset)
+and check that a synthetic account receives and can use both kinds of email.
 
 `DJANGO_HSTS_INCLUDE_SUBDOMAINS` and `DJANGO_HSTS_PRELOAD` default to False. Django
 reports warnings for these defaults. Enable them only after confirming that all
@@ -58,7 +62,7 @@ restore, and exercise session/CSRF behavior on the actual origin. At a reverse
 proxy, trust forwarded HTTPS/IP headers only when the proxy overwrites them and
 direct access to Django is blocked. These changes do not alter existing proxy
 trust or publish the application. Master-password rewrapping is available;
-independent audit, recovery, data-key rotation and offline synchronization
+independent audit, vault-key recovery, data-key rotation and offline synchronization
 remain outstanding.
 
 References: [Django deployment checklist](https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/),

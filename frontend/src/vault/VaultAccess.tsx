@@ -8,7 +8,15 @@ export default function VaultAccess({ controller }: { controller: VaultControlle
   const [master, setMaster] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [localError, setLocalError] = useState('')
-  const creating = state.loaded && state.vaults.length === 0
+  const [another, setAnother] = useState(false)
+  const creating = state.loaded && (state.vaults.length === 0 || another)
+
+  function changeMode() {
+    setAnother(!another)
+    setMaster('')
+    setConfirmation('')
+    setLocalError('')
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -28,7 +36,8 @@ export default function VaultAccess({ controller }: { controller: VaultControlle
     <p className="mt-3 text-sm leading-7 text-slate-400">Your master password stays on this device. It unlocks your vault separately from your NEXORA account.</p>
     {(localError || state.error) && <p role="alert" className="mt-4 text-sm text-red-300">{localError || state.error}</p>}
     {!state.loaded ? <button disabled={state.busy} onClick={() => void controller.load()} className="mt-6 rounded-xl brand-primary px-5 py-3 text-sm disabled:opacity-50">{state.busy ? 'Loading vault...' : 'Load vault'}</button> : <>
-      {state.vaults.length > 1 && <label className="mt-5 block text-sm text-slate-300">Vault<select aria-label="Select vault" value={state.selectedId ?? ''} disabled={state.busy} onChange={(event) => controller.select(event.target.value)} className="mt-2 block w-full rounded-lg bg-vault-raised p-3">{state.vaults.map((vault, index) => <option key={vault.id} value={vault.id}>Personal vault {index + 1}</option>)}</select></label>}
+      {!creating && state.vaults.length > 1 && <label className="mt-5 block text-sm text-slate-300">Vault<select aria-label="Select vault" value={state.selectedId ?? ''} disabled={state.busy} onChange={(event) => controller.select(event.target.value)} className="mt-2 block w-full rounded-lg bg-vault-raised p-3">{state.vaults.map((vault, index) => <option key={vault.id} value={vault.id}>Personal vault {index + 1}</option>)}</select></label>}
+      {another && <p className="mt-4 text-sm text-slate-400">Create a separate vault with a new master password. To recover saved entries, open Backups in the new vault and restore your encrypted archive.</p>}
       <form className="mt-6 max-w-md space-y-5" onSubmit={(event) => void submit(event)}>
         <label className="block text-xs text-slate-300">Master password
           <input required type="password" autoComplete="off" spellCheck={false} minLength={creating ? 12 : 1} maxLength={1024} value={master} disabled={state.busy} onChange={(event) => setMaster(event.target.value)} className="mt-2 block w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm outline-none focus:border-blue-400" />
@@ -38,6 +47,9 @@ export default function VaultAccess({ controller }: { controller: VaultControlle
         <button disabled={state.busy} className="w-full rounded-xl brand-primary px-5 py-3 text-sm font-semibold disabled:opacity-50">{state.busy ? 'Deriving your key...' : creating ? 'Create encrypted vault' : 'Unlock vault'}</button>
       </form>
       <button disabled={state.busy} onClick={() => void controller.load()} className="mt-5 text-xs text-slate-400 underline">Refresh vault list</button>
+      {state.vaults.length > 0 && state.vaults.length < 10 && <button type="button" disabled={state.busy} onClick={changeMode} className="ml-4 mt-5 text-xs text-blue-300 underline">
+        {another ? 'Return to vault unlock' : 'Create another vault'}
+      </button>}
     </>}
     <p className="mt-6 border-t border-white/10 pt-4 text-xs leading-6 text-amber-200/70">Development build. Independent security audit pending; use test credentials.</p>
   </section>

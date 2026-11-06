@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/build-offline-shell.mjs",
     "lint": "oxlint src vite.config.ts --deny-warnings",
     "test": "node --test tests/*.test.mjs",
     "preview": "vite preview"

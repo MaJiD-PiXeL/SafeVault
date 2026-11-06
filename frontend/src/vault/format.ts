@@ -4,8 +4,12 @@ export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 export type VaultMetadata = typeof PROFILE & { id: string; kdf_salt: string; wrap_nonce: string; wrapped_key: string }
 export type EncryptedEntry = { id: string; vault_id: string; nonce: string; ciphertext: string;
   revision: number; state_version: number; deleted_at: string | null; created_at: string; updated_at: string }
-export type EntryPayload = { schema_version: 1; title: string; username: string; password: string;
-  website: string; notes: string; category: string; favorite: boolean }
+type EntryFields = { title: string; notes: string; category: string; favorite: boolean }
+export type PasswordPayload = EntryFields & { schema_version: 1; username: string; password: string; website: string }
+export type NotePayload = EntryFields & { schema_version: 2; kind: 'note' }
+export type CardPayload = EntryFields & { schema_version: 2; kind: 'card'; cardholder: string; card_number: string; expiry: string }
+export type EntryPayload = PasswordPayload | NotePayload | CardPayload
+export type EntryKind = 'password' | 'note' | 'card'
 export type UnlockedEntry = { envelope: EncryptedEntry; data: EntryPayload }
 export type SecurityPreferences = { auto_lock_seconds: number; lock_on_hidden: boolean }
 export const DEFAULT_PREFERENCES: SecurityPreferences = { auto_lock_seconds: 300, lock_on_hidden: true }
@@ -61,14 +65,50 @@ export function validateEnvelope(value: unknown, vaultId: string): EncryptedEntr
 }
 
 export function validatePayload(value: unknown): EntryPayload {
-  if (!object(value) || value.schema_version !== 1 ||
-      Object.keys(value).some((key) => !['schema_version', 'title', 'username', 'password', 'website', 'notes', 'category', 'favorite'].includes(key)) ||
-      typeof value.title !== 'string' || !value.title.trim() || typeof value.password !== 'string' || !value.password ||
-      ['username', 'website', 'notes', 'category'].some((name) => value[name] !== undefined && typeof value[name] !== 'string') ||
+  if (!object(value) || typeof value.title !== 'string' || !value.title.trim() ||
+      ['notes', 'category'].some((name) => value[name] !== undefined && typeof value[name] !== 'string') ||
       (value.favorite !== undefined && typeof value.favorite !== 'boolean')) throw new VaultDataError('Invalid entry fields.')
-  return { schema_version: 1, title: value.title, username: value.username as string ?? '', password: value.password,
-    website: value.website as string ?? '', notes: value.notes as string ?? '', category: value.category as string ?? '',
+  const shared = { title: value.title, notes: value.notes as string ?? '', category: value.category as string ?? '',
     favorite: value.favorite as boolean ?? false }
+  const commonKeys = ['schema_version', 'title', 'notes', 'category', 'favorite']
+  const onlyKeys = (...fields: string[]) => Object.keys(value).every((key) => commonKeys.includes(key) || fields.includes(key))
+  if (value.schema_version === 1 && onlyKeys('username', 'password', 'website') &&
+      typeof value.password === 'string' && value.password &&
+      (value.username === undefined || typeof value.username === 'string') &&
+      (value.website === undefined || typeof value.website === 'string')) {
+    // Retain the v1 field order used by existing backup content.
+    return { schema_version: 1, title: shared.title, username: value.username ?? '', password: value.password,
+      website: value.website ?? '', notes: shared.notes, category: shared.category, favorite: shared.favorite }
+  }
+  if (value.schema_version === 2) {
+    if (value.kind === 'note' && onlyKeys('kind') && shared.notes.trim()) {
+      return { schema_version: 2, kind: 'note', ...shared }
+    }
+    if (value.kind === 'card' && onlyKeys('kind', 'cardholder', 'card_number', 'expiry') &&
+        typeof value.cardholder === 'string' && value.cardholder.length <= 200 &&
+        typeof value.card_number === 'string' && /^[0-9]{12,19}$/.test(value.card_number) &&
+        typeof value.expiry === 'string' && validCardExpiry(value.expiry)) {
+      return { schema_version: 2, kind: 'card', ...shared, cardholder: value.cardholder,
+        card_number: value.card_number, expiry: value.expiry }
+    }
+  }
+  throw new VaultDataError('Invalid entry fields.')
+}
+
+export const validCardExpiry = (expiry: string) => expiry === '' || /^(0[1-9]|1[0-2])\/[0-9]{4}$/.test(expiry)
+
+export function entryKind(data: EntryPayload): EntryKind {
+  return data.schema_version === 1 ? 'password' : data.kind
+}
+
+export const ENTRY_LABELS: Record<EntryKind, string> = {
+  password: 'password', note: 'secure note', card: 'payment card',
+}
+
+export function entrySummary(data: EntryPayload) {
+  if (data.schema_version === 1) return { primary: data.username, secondary: data.website }
+  if (data.kind === 'card') return { primary: data.cardholder || 'Payment card', secondary: `•••• ${data.card_number.slice(-4)}` }
+  return { primary: 'Secure note', secondary: '' }
 }
 
 export function validatePreferences(value: unknown): SecurityPreferences {

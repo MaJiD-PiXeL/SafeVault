@@ -1,0 +1,13 @@
+bind = "unix:/run/safevault/gunicorn.sock"
+umask = 0o007
+workers = 2
+threads = 2
+timeout = 60
+max_requests = 1000
+max_requests_jitter = 100
+secure_scheme_headers = {"X-FORWARDED-PROTO": "https"}
+forwarder_headers = ""
+header_map = "drop"
+control_socket_disable = True
+accesslog = None
+errorlog = "-"

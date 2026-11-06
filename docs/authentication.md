@@ -91,6 +91,48 @@ Do not enable raw-body logging, credential telemetry or unfiltered exception
 capture in the app, proxy or external monitoring tools. DEBUG must remain off
 in production.
 
+## Recovery email and account password reset
+
+Open **Account → Recovery email**, enter your account password and send a
+verification link. Existing accounts can enroll through the same form. An
+unverified address can be corrected by repeating enrollment. A verified address
+is fixed in this release. The verification and password reset links expire
+after 30 minutes and require an explicit confirmation in the app.
+
+On the sign-in page, choose **Forgot your account password?** and enter your
+username. The request queues the username and returns the same acceptance
+message for all valid inputs. The worker sends links to active accounts with a
+verified recovery address and a usable password. After a successful reset, sign
+in again and use your existing master password to unlock your vault.
+
+Link tokens use Django's password reset generator with separate signing
+contexts for the two actions. They bind to the account, its password hash and
+its recovery email state. Verification and reset each consume the corresponding
+link under a user row lock. A reset revokes product sessions. Its password hash
+change also invalidates Django sessions that were created outside the product
+sign-in flow. Link fragments are cleared by the frontend and confirmation
+requests carry the token in a CSRF-protected JSON body.
+
+Set `DJANGO_ACCOUNT_LINK_ORIGIN` to the frontend's HTTPS origin in production
+and `DJANGO_FROM_EMAIL` to the sender address accepted by your SMTP provider.
+Run the following command in the same environment as the web app, on a
+one-minute schedule for the beta.
+
+```powershell
+backend/.venv/Scripts/python.exe -B backend/manage.py dispatch_account_recovery
+```
+
+Each invocation processes up to 20 queued requests and discards requests older
+than 15 minutes. It reports counts and exits with an error on delivery failure.
+A failed delivery can be requested again within the request budget. For
+development, the console mailer prints links for synthetic accounts. Keep the
+worker's output and email contents private.
+
+The recovery design uses Django's token generator and the OWASP guidance on
+single-use tokens, uniform responses and session invalidation.
+[Django password reset](https://docs.djangoproject.com/en/6.0/topics/auth/default/#django.contrib.auth.views.PasswordResetView) ·
+[OWASP password reset guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html)
+
 ## Configuration and maintenance
 
 `DJANGO_ENV` must be `development` or `production`. Development permits local
@@ -135,6 +177,14 @@ backend/.venv/Scripts/python.exe -B backend/manage.py test accounts vault --sett
 ```
 
 The PostgreSQL suite uses a fresh random test database, not the real vault.
+The private beta rehearsal ran the built frontend and Django on loopback with
+a separate SQLite database and a file-based email outbox. It redeemed both
+email links through the account API, checked that old sessions were revoked,
+and opened the existing vault with its master password after signing in again.
+It restored an encrypted backup into a second vault and checked that the
+existing entry survived, the archived entry retained its fields and a second
+restore produced no duplicates.
+
 Coverage includes account validation/hashing, login CSRF, untrusted origins,
 session/token rotation, account isolation, session expiry/revocation/caps,
 registration rollback, admin/API lockouts, expired-state cleanup, atomic request

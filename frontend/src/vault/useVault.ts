@@ -25,6 +25,20 @@ export function useVault(ownerId: number | null, enabled: boolean) {
       window.clearInterval(interval)
     }
   }, [controller])
+  useEffect(() => {
+    if (!enabled || ownerId === null) return
+    const sync = () => { if (!document.hidden) void controller.sync() }
+    window.addEventListener('focus', sync)
+    window.addEventListener('online', sync)
+    document.addEventListener('visibilitychange', sync)
+    const interval = window.setInterval(sync, 20000)
+    return () => {
+      window.removeEventListener('focus', sync)
+      window.removeEventListener('online', sync)
+      document.removeEventListener('visibilitychange', sync)
+      window.clearInterval(interval)
+    }
+  }, [controller, enabled, ownerId])
   const current = enabled && snapshot.ownerId === ownerId && ownerId !== null
   return { ...snapshot, unlocked: current && snapshot.unlocked, entries: current && snapshot.unlocked ? snapshot.entries : [],
     trash: current && snapshot.unlocked ? snapshot.trash : [], controller }

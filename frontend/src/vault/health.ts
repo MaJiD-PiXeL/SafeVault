@@ -1,4 +1,4 @@
-import type { UnlockedEntry } from './format'
+import type { PasswordPayload, UnlockedEntry } from './format'
 
 export type PasswordWarning = 'short' | 'common' | 'repeated' | 'sequence'
 export const WARNING_LABELS: Record<PasswordWarning, string> = {
@@ -25,13 +25,14 @@ export function passwordWarnings(password: string): PasswordWarning[] {
 }
 
 export function analyzePasswords(entries: readonly UnlockedEntry[]) {
+  const passwords = entries.filter((entry): entry is UnlockedEntry & { data: PasswordPayload } => entry.data.schema_version === 1)
   const counts = new Map<string, number>()
-  for (const entry of entries) counts.set(entry.data.password, (counts.get(entry.data.password) ?? 0) + 1)
-  const findings = entries.map((entry) => ({ id: entry.envelope.id,
+  for (const entry of passwords) counts.set(entry.data.password, (counts.get(entry.data.password) ?? 0) + 1)
+  const findings = passwords.map((entry) => ({ id: entry.envelope.id,
     warnings: passwordWarnings(entry.data.password), reuseCount: counts.get(entry.data.password)! }))
   // Only identifiers and findings escape this function; no password copies in the report.
   return {
-    total: entries.length,
+    total: passwords.length,
     weak: findings.filter((item) => item.warnings.length > 0).length,
     reused: findings.filter((item) => item.reuseCount > 1).length,
     review: findings.filter((item) => item.warnings.length > 0 || item.reuseCount > 1).length,

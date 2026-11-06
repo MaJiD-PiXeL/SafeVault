@@ -16,6 +16,11 @@ function vaultPath(id: string) {
   return `vaults/${id}/entries`
 }
 
+function readVersion(value: unknown): string {
+  if (typeof value !== 'string' || !UUID.test(value)) throw new VaultDataError('Invalid vault snapshot version.')
+  return value
+}
+
 function versions(entry: EncryptedEntry) {
   return { expected_revision: entry.revision, expected_state_version: entry.state_version }
 }
@@ -54,14 +59,24 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
       if (JSON.stringify(result) !== JSON.stringify(vault)) throw new VaultDataError()
       return result
     },
-    async entries(id: string, signal: AbortSignal): Promise<EncryptedEntry[]> {
+    async entriesVersion(id: string, signal: AbortSignal) {
+      if (!UUID.test(id)) throw new VaultDataError()
+      const data = await request(`vaults/${id}/entries-version`, 'GET', undefined, signal)
+      if (!object(data)) throw new VaultDataError()
+      return readVersion(data.version)
+    },
+    async entries(id: string, signal: AbortSignal, onVersion?: (version: string) => void): Promise<EncryptedEntry[]> {
       const entries: EncryptedEntry[] = []
       let count = -1
       let totalBytes = 0
+      let version: string | null = null
       for (let page = 1; page <= 100; page += 1) {
         const data = await request(`${vaultPath(id)}?state=all&page=${page}`, 'GET', undefined, signal)
         if (!object(data) || !Number.isSafeInteger(data.count) || (data.count as number) < 0 ||
             !Array.isArray(data.results) || data.results.length > 50 || (data.next !== null && typeof data.next !== 'string')) throw new VaultDataError()
+        const pageVersion = data.version === undefined ? null : readVersion(data.version)
+        if (page > 1 && version !== pageVersion) throw new ApiError('Vault changed during loading. Refresh and try again.', 409)
+        version = pageVersion
         if ((data.count as number) > 5000) throw new VaultDataError('This vault is too large for this client.')
         if (count !== -1 && count !== data.count) throw new VaultDataError('Vault changed during loading. Refresh and try again.')
         count = data.count as number
@@ -72,6 +87,7 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
         if (new Set(entries.map((entry) => entry.id)).size !== entries.length) throw new VaultDataError('Vault changed during loading. Refresh and try again.')
         if (data.next === null) {
           if (entries.length !== count) throw new VaultDataError()
+          if (version !== null) onVersion?.(version)
           return entries
         }
         // Construct our own same-origin page path; never follow response URLs.

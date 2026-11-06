@@ -9,6 +9,18 @@ synthetic test data in this development build.
 
 ## User flow
 
+Use **Offline Backup** to open a downloaded archive with its backup password
+and read the export snapshot. After the production app has cached its public
+files, the viewer works after an offline reload. The viewer locks when the tab
+is hidden, when the page closes or after five minutes without interaction.
+Use **Backups → Restore into this vault** to add the archived entries to a live
+vault.
+
+If you have lost your master password and have a backup, sign in to your
+account and use **Create another vault** on the unlock screen. Open **Backups**
+in the new vault and restore with the backup password. The original vault
+remains available from the vault selector.
+
 Sign in and unlock a destination vault, then open **Backups**.
 
 For export, enter and confirm a **separate backup password** of 12–1,024

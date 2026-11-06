@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { RotateCcw, Search, Trash2 } from 'lucide-react'
 import type { VaultController } from './controller'
+import { entrySummary } from './format'
 import type { EncryptedEntry, UnlockedEntry } from './format'
 
 const sameVersion = (a: EncryptedEntry | null, b: EncryptedEntry) =>
@@ -13,8 +14,11 @@ export default function TrashPanel({ controller, entries }: { controller: VaultC
   const [confirmation, setConfirmation] = useState<EncryptedEntry | null>(null)
   const [message, setMessage] = useState('')
   const search = query.trim().toLowerCase()
-  const filtered = entries.filter(({ data }) => [data.title, data.username, data.website, data.category, data.notes]
-    .some((value) => value.toLowerCase().includes(search)))
+  const filtered = entries.filter(({ data }) => {
+    const { primary, secondary } = entrySummary(data)
+    return [data.title, primary, secondary, data.category, data.notes]
+      .some((value) => value.toLowerCase().includes(search))
+  })
     .sort((a, b) => Date.parse(b.envelope.deleted_at!) - Date.parse(a.envelope.deleted_at!))
   const lastPage = Math.max(0, Math.ceil(filtered.length / 20) - 1)
   const currentPage = Math.min(page, lastPage)
@@ -22,7 +26,7 @@ export default function TrashPanel({ controller, entries }: { controller: VaultC
   async function restore(envelope: EncryptedEntry) {
     setMessage('')
     setConfirmation(null)
-    if (await controller.restoreEntry(envelope.id, envelope.revision, envelope.state_version)) setMessage('Entry restored to All Passwords.')
+    if (await controller.restoreEntry(envelope.id, envelope.revision, envelope.state_version)) setMessage('Entry restored to your vault.')
   }
 
   async function purge(envelope: EncryptedEntry) {
@@ -53,7 +57,7 @@ export default function TrashPanel({ controller, entries }: { controller: VaultC
       const confirming = sameVersion(confirmation, envelope)
       return <article key={envelope.id} className="py-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0 flex-1"><h3 className="truncate text-sm font-semibold">{data.title}</h3><p className="mt-1 truncate text-xs text-slate-400">{data.username}</p><p className="mt-2 text-xs text-slate-400">Moved to Trash {new Date(envelope.deleted_at!).toLocaleString()}</p></div>
+          <div className="min-w-0 flex-1"><h3 className="truncate text-sm font-semibold">{data.title}</h3><p className="mt-1 truncate text-xs text-slate-400">{entrySummary(data).primary}</p><p className="mt-2 text-xs text-slate-400">Moved to Trash {new Date(envelope.deleted_at!).toLocaleString()}</p></div>
           <div className="flex flex-wrap gap-2">
             <button disabled={state.busy} aria-label={`Restore ${data.title}`} onClick={() => void restore(envelope)} className="flex items-center gap-2 rounded-lg border border-blue-400/25 px-3 py-2 text-xs text-blue-200 disabled:opacity-50"><RotateCcw size={14} />Restore</button>
             <button disabled={state.busy} aria-label={`${confirming ? 'Confirm permanent deletion of' : 'Delete forever'} ${data.title}`} onClick={() => void purge(envelope)} className="rounded-lg border border-red-400/25 px-3 py-2 text-xs text-red-300 disabled:opacity-50">{confirming ? 'Confirm permanent deletion' : 'Delete forever'}</button>

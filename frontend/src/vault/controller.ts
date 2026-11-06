@@ -12,17 +12,18 @@ type Snapshot = { ownerId: number | null; loaded: boolean; busy: boolean; unlock
   vaults: VaultMetadata[]; selectedId: string | null; entries: UnlockedEntry[]; trash: UnlockedEntry[]; preferences: SecurityPreferences; lockEpoch: number;
   backupExport: { text: string; fileName: string } | null;
   backupPreview: { exportedAt: string; count: number; titles: string[]; alreadyRestored: boolean } | null;
-  backupResult: string; masterPasswordResult: string }
+  backupResult: string; masterPasswordResult: string; entriesVersion: string | null }
 type Operation = { signal: AbortSignal }
 const initial = (): Snapshot => ({ ownerId: null, loaded: false, busy: false, unlocked: false, error: '',
   vaults: [], selectedId: null, entries: [], trash: [], preferences: { ...DEFAULT_PREFERENCES }, lockEpoch: 0,
-  backupExport: null, backupPreview: null, backupResult: '', masterPasswordResult: '' })
+  backupExport: null, backupPreview: null, backupResult: '', masterPasswordResult: '', entriesVersion: null })
 
 export class VaultController {
   #state: Snapshot = initial()
   #key: CryptoKey | null = null
   #epoch = 0
   #abort: AbortController | null = null
+  #syncAbort: AbortController | null = null
   #listeners = new Set<() => void>()
   #lastActivity = 0
   #api: VaultApi
@@ -39,11 +40,13 @@ export class VaultController {
   lock = () => {
     this.#epoch += 1
     this.#abort?.abort()
+    this.#syncAbort?.abort()
+    this.#syncAbort = null
     this.#key = null
     this.#backupDraft = null
     this.#backupWork = false
     this.#publish({ entries: [], trash: [], unlocked: false, busy: false, error: '', lockEpoch: this.#state.lockEpoch + 1,
-      backupExport: null, backupPreview: null, backupResult: '', masterPasswordResult: '' })
+      backupExport: null, backupPreview: null, backupResult: '', masterPasswordResult: '', entriesVersion: null })
   }
 
   switchAccount(ownerId: number | null, enabled: boolean) {
@@ -55,6 +58,8 @@ export class VaultController {
 
   async #run(action: (op: Operation) => Promise<{ patch: Partial<Snapshot>; key?: CryptoKey; backupDraft?: OpenedBackup | null; lock?: boolean }>, backupWork = false): Promise<boolean> {
     if (this.#state.busy || this.#state.ownerId === null) return false
+    this.#syncAbort?.abort()
+    this.#syncAbort = null
     const epoch = ++this.#epoch
     const abort = new AbortController()
     this.#abort = abort
@@ -93,23 +98,26 @@ export class VaultController {
   }
 
   create = (master: string) => this.#run(async ({ signal }) => {
-    if (!this.#state.loaded || this.#state.vaults.length) throw new VaultDataError('Refresh your vault list before creating a vault.')
+    if (!this.#state.loaded) throw new VaultDataError('Refresh your vault list before creating a vault.')
+    if (this.#state.unlocked || this.#state.vaults.length >= 10) throw new ApiError('Lock your vault first. Each account can have up to ten vaults.', 400)
+    const previous = this.#state.vaults
     const { vault, key } = await createEncryptedVault(master, this.#derive, signal)
     signal.throwIfAborted()
     let saved: VaultMetadata
     try { saved = await this.#api.create(vault, signal) }
     catch (error) { if (!signal.aborted) this.#publish({ loaded: false }); throw error }
-    return { key, patch: { vaults: [saved], selectedId: saved.id, unlocked: true, entries: [], trash: [], loaded: true } }
+    return { key, patch: { vaults: [...previous, saved], selectedId: saved.id, unlocked: true, entries: [], trash: [], loaded: true } }
   })
 
   async #readEntries(key: CryptoKey, id: string, signal: AbortSignal) {
-    const envelopes = await this.#api.entries(id, signal)
+    let entriesVersion: string | null = null
+    const envelopes = await this.#api.entries(id, signal, (version) => { entriesVersion = version })
     const entries: UnlockedEntry[] = []
     for (const envelope of envelopes) {
       signal.throwIfAborted()
       entries.push({ envelope, data: await decryptEntry(key, envelope) })
     }
-    return { entries: entries.filter((entry) => entry.envelope.deleted_at === null),
+    return { entriesVersion, entries: entries.filter((entry) => entry.envelope.deleted_at === null),
       trash: entries.filter((entry) => entry.envelope.deleted_at !== null) }
   }
 
@@ -131,11 +139,36 @@ export class VaultController {
     return { patch: await this.#readEntries(this.#key, this.#state.selectedId, signal) }
   })
 
+  sync = async () => {
+    const { unlocked, selectedId, busy, entriesVersion } = this.#state
+    const key = this.#key
+    if (!unlocked || !key || !selectedId || busy || this.#syncAbort) return
+    const controller = new AbortController()
+    this.#syncAbort = controller
+    const { signal } = controller
+    const current = () => this.#syncAbort === controller && !signal.aborted
+    try {
+      const remote = await this.#api.entriesVersion(selectedId, signal)
+      if (!current() || remote === entriesVersion) return
+      const snapshot = await this.#readEntries(key, selectedId, signal)
+      if (current()) this.#publish(snapshot)
+    } catch (error) {
+      const lostAccess = error instanceof ApiError &&
+        ([401, 403].includes(error.status) || (error.status === 404 && entriesVersion !== null))
+      if (current() && (error instanceof VaultDataError || lostAccess)) {
+        this.lock()
+        this.#publish({ error: error instanceof VaultDataError ? error.message : accountError(error) })
+      }
+    } finally {
+      if (this.#syncAbort === controller) this.#syncAbort = null
+    }
+  }
+
   save = (value: EntryPayload, existingId?: string, expectedRevision?: number, expectedStateVersion?: number) => this.#run(async ({ signal }) => {
     if (!this.#key || !this.#state.unlocked || !this.#state.selectedId) throw new VaultDataError('Unlock your vault first.')
     const data = validatePayload(value)
     const existing = existingId ? this.#state.entries.find((entry) => entry.envelope.id === existingId) : undefined
-    if (existingId && !existing) throw new VaultDataError('Refresh before editing this entry.')
+    if (existingId && !existing) throw new ApiError('This entry is no longer active. You can save your edits as a new copy.', 409)
     if (existing && expectedRevision !== existing.envelope.revision) throw new ApiError('Entry changed. Close the editor and refresh before saving.', 409)
     if (existing && expectedStateVersion !== existing.envelope.state_version) throw new ApiError('Entry moved to or from Trash. Close the editor and refresh before saving.', 409)
     const id = existingId ?? crypto.randomUUID()
@@ -148,7 +181,8 @@ export class VaultController {
 
   remove = (id: string, expectedRevision: number, expectedStateVersion: number) => this.#run(async ({ signal }) => {
     const entry = this.#state.entries.find((item) => item.envelope.id === id)
-    if (!this.#key || !entry) throw new VaultDataError('Unlock and refresh before deleting.')
+    if (!this.#key) throw new VaultDataError('Unlock and refresh before deleting.')
+    if (!entry) throw new ApiError('This entry is no longer active.', 409)
     if (expectedRevision !== entry.envelope.revision) throw new ApiError('Entry changed. Close the editor and refresh before deleting.', 409)
     if (expectedStateVersion !== entry.envelope.state_version) throw new ApiError('Entry state changed. Close the editor and refresh before moving it to Trash.', 409)
     const envelope = await this.#api.remove(entry.envelope, signal)
