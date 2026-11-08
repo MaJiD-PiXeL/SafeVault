@@ -1,14 +1,25 @@
 export const PROFILE = Object.freeze({ format_version: 1, cipher: 'AES-256-GCM', kdf: 'argon2id',
   kdf_version: 19, kdf_memory_kib: 65536, kdf_iterations: 3, kdf_parallelism: 4 } as const)
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-export type VaultMetadata = typeof PROFILE & { id: string; kdf_salt: string; wrap_nonce: string; wrapped_key: string }
+export const MAX_ATTACHMENT_COUNT = 3
+export const MAX_ATTACHMENT_BYTES = 1024 * 1024
+export const MAX_ATTACHMENTS_BYTES = 2 * MAX_ATTACHMENT_BYTES
+export const MAX_ENTRY_PLAINTEXT_BYTES = 3 * 1024 * 1024
+export const MAX_ENTRY_CIPHERTEXT_BYTES = MAX_ENTRY_PLAINTEXT_BYTES + 16
+const MAX_RECORD_BYTES = 64 * 1024
+export type RecoveryEnvelope = { nonce: string; wrapped_key: string }
+export type VaultMetadata = typeof PROFILE & { id: string; kdf_salt: string; wrap_nonce: string; wrapped_key: string;
+  key_version?: number; recovery?: RecoveryEnvelope }
 export type EncryptedEntry = { id: string; vault_id: string; nonce: string; ciphertext: string;
   revision: number; state_version: number; deleted_at: string | null; created_at: string; updated_at: string }
 type EntryFields = { title: string; notes: string; category: string; favorite: boolean }
 export type PasswordPayload = EntryFields & { schema_version: 1; username: string; password: string; website: string }
 export type NotePayload = EntryFields & { schema_version: 2; kind: 'note' }
 export type CardPayload = EntryFields & { schema_version: 2; kind: 'card'; cardholder: string; card_number: string; expiry: string }
-export type EntryPayload = PasswordPayload | NotePayload | CardPayload
+type EntryRecord = PasswordPayload | NotePayload | CardPayload
+export type Attachment = { name: string; size: number; content: string }
+export type EntryPayload = EntryRecord & { attachments?: Attachment[] }
+type EncodedEntryPayload = EntryRecord | { schema_version: 3; record: EntryRecord; attachments: Attachment[] }
 export type EntryKind = 'password' | 'note' | 'card'
 export type UnlockedEntry = { envelope: EncryptedEntry; data: EntryPayload }
 export type SecurityPreferences = { auto_lock_seconds: number; lock_on_hidden: boolean }
@@ -27,17 +38,27 @@ export function object(value: unknown): value is Record<string, unknown> {
 
 export function toBase64(bytes: Uint8Array): string {
   let text = ''
-  for (const byte of bytes) text += String.fromCharCode(byte)
+  for (let index = 0; index < bytes.length; index += 8192) text += String.fromCharCode(...bytes.subarray(index, index + 8192))
   return btoa(text)
 }
 
+const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+function base64ByteLength(value: unknown, minimum: number, maximum: number): number {
+  if (typeof value !== 'string' || value.length % 4 !== 0 || value.length > 4 * Math.ceil(maximum / 3)) throw new VaultDataError()
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0
+  const dataLength = value.length - padding
+  const length = value.length / 4 * 3 - padding
+  if (length < minimum || length > maximum || /[^A-Za-z0-9+/]/.test(value.slice(0, dataLength)) ||
+      (padding > 0 && (BASE64.indexOf(value.charAt(dataLength - 1)) & (padding === 2 ? 15 : 3)) !== 0)) throw new VaultDataError()
+  return length
+}
+
 export function fromBase64(value: unknown, minimum: number, maximum = minimum): Uint8Array<ArrayBuffer> {
-  if (typeof value !== 'string' || value.length > 4 * Math.ceil(maximum / 3)) throw new VaultDataError()
-  try {
-    const bytes = Uint8Array.from(atob(value), (char) => char.charCodeAt(0))
-    if (bytes.length < minimum || bytes.length > maximum || toBase64(bytes) !== value) throw new VaultDataError()
-    return bytes
-  } catch { throw new VaultDataError() }
+  const length = base64ByteLength(value, minimum, maximum)
+  const raw = atob(value as string)
+  const bytes = new Uint8Array(length)
+  for (let index = 0; index < length; index += 1) bytes[index] = raw.charCodeAt(index)
+  return bytes
 }
 
 export function validateVault(value: unknown): VaultMetadata {
@@ -46,8 +67,24 @@ export function validateVault(value: unknown): VaultMetadata {
   fromBase64(value.kdf_salt, 16)
   fromBase64(value.wrap_nonce, 12)
   fromBase64(value.wrapped_key, 48)
+  const keyVersion = readKeyVersion(value.key_version)
+  const recovery = value.recovery == null ? undefined : validateRecoveryEnvelope(value.recovery)
   return { ...PROFILE, id: value.id, kdf_salt: value.kdf_salt as string,
-    wrap_nonce: value.wrap_nonce as string, wrapped_key: value.wrapped_key as string }
+    wrap_nonce: value.wrap_nonce as string, wrapped_key: value.wrapped_key as string,
+    ...(keyVersion > 1 ? { key_version: keyVersion } : {}), ...(recovery ? { recovery } : {}) }
+}
+
+export function validateRecoveryEnvelope(value: unknown): RecoveryEnvelope {
+  if (!object(value)) throw new VaultDataError('Invalid recovery key data.')
+  fromBase64(value.nonce, 12)
+  fromBase64(value.wrapped_key, 48)
+  return { nonce: value.nonce as string, wrapped_key: value.wrapped_key as string }
+}
+
+export function readKeyVersion(value: unknown): number {
+  if (value === undefined) return 1
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > 2147483647) throw new VaultDataError('Invalid vault key version.')
+  return value
 }
 
 export function validateEnvelope(value: unknown, vaultId: string): EncryptedEntry {
@@ -58,13 +95,13 @@ export function validateEnvelope(value: unknown, vaultId: string): EncryptedEntr
       typeof value.created_at !== 'string' || !Number.isFinite(Date.parse(value.created_at)) ||
       typeof value.updated_at !== 'string' || !Number.isFinite(Date.parse(value.updated_at))) throw new VaultDataError()
   fromBase64(value.nonce, 12)
-  fromBase64(value.ciphertext, 17, 65552)
+  base64ByteLength(value.ciphertext, 17, MAX_ENTRY_CIPHERTEXT_BYTES)
   return { id: value.id, vault_id: vaultId, nonce: value.nonce as string, ciphertext: value.ciphertext as string,
     revision: value.revision as number, state_version: value.state_version as number, deleted_at: value.deleted_at as string | null,
     created_at: value.created_at, updated_at: value.updated_at }
 }
 
-export function validatePayload(value: unknown): EntryPayload {
+function validateRecord(value: unknown): EntryRecord {
   if (!object(value) || typeof value.title !== 'string' || !value.title.trim() ||
       ['notes', 'category'].some((name) => value[name] !== undefined && typeof value[name] !== 'string') ||
       (value.favorite !== undefined && typeof value.favorite !== 'boolean')) throw new VaultDataError('Invalid entry fields.')
@@ -93,6 +130,54 @@ export function validatePayload(value: unknown): EntryPayload {
     }
   }
   throw new VaultDataError('Invalid entry fields.')
+}
+
+export function validAttachmentName(name: string) {
+  return name.length > 0 && name.length <= 180 && name === name.trim() && !name.endsWith('.') &&
+    !/[<>:"/\\|?*\p{Cc}\p{Cs}\u202a-\u202e\u2066-\u2069]/u.test(name) &&
+    !/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?: *\.|$)/i.test(name)
+}
+
+function validateAttachments(value: unknown): Attachment[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_ATTACHMENT_COUNT) throw new VaultDataError('Invalid attachment list.')
+  let total = 0
+  const attachments = value.map((file) => {
+    if (!object(file) || Object.keys(file).length !== 3 || typeof file.name !== 'string' || !validAttachmentName(file.name) ||
+        typeof file.size !== 'number' || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > MAX_ATTACHMENT_BYTES ||
+        typeof file.content !== 'string' || base64ByteLength(file.content, file.size, file.size) !== file.size) {
+      throw new VaultDataError('Invalid attachment data.')
+    }
+    total += file.size
+    return { name: file.name, size: file.size, content: file.content }
+  })
+  if (total > MAX_ATTACHMENTS_BYTES) throw new VaultDataError('Attachments exceed the 2 MiB limit per entry.')
+  return attachments
+}
+
+export function validatePayload(value: unknown): EntryPayload {
+  if (!object(value) || !Object.hasOwn(value, 'attachments')) return validateRecord(value)
+  const { attachments, ...record } = value
+  return { ...validateRecord(record), attachments: validateAttachments(attachments) }
+}
+
+function limitRecord(record: EntryRecord) {
+  const bytes = new TextEncoder().encode(JSON.stringify(record))
+  try {
+    if (bytes.length > MAX_RECORD_BYTES) throw new VaultDataError('Entry text exceeds the 64 KiB limit.')
+  } finally { bytes.fill(0) }
+  return record
+}
+
+export function encodeEntryPayload(value: EntryPayload): EncodedEntryPayload {
+  const { attachments, ...record } = validatePayload(value)
+  limitRecord(record)
+  return attachments ? { schema_version: 3, record, attachments } : record
+}
+
+export function decodeEntryPayload(value: unknown): EntryPayload {
+  if (!object(value) || value.schema_version !== 3) return limitRecord(validateRecord(value))
+  if (Object.keys(value).length !== 3) throw new VaultDataError('Invalid attachment payload.')
+  return { ...limitRecord(validateRecord(value.record)), attachments: validateAttachments(value.attachments) }
 }
 
 export const validCardExpiry = (expiry: string) => expiry === '' || /^(0[1-9]|1[0-2])\/[0-9]{4}$/.test(expiry)

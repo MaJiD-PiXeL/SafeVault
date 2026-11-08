@@ -27,6 +27,10 @@ class RevisionConflict(Exception):
     """A client attempted to overwrite a newer encrypted entry."""
 
 
+class KeyVersionConflict(RevisionConflict):
+    """The operation was prepared under a different data key."""
+
+
 class NonceConflict(ValidationError):
     """A nonce previously submitted under this vault key cannot be reused."""
 
@@ -55,13 +59,104 @@ def change_master_password(*, user, vault_id, expected_kdf_salt, expected_wrap_n
     """Replace only the client-produced wrapper, provided it has not changed."""
     _require_user(user)
     vault = Vault.objects.for_user(user).select_for_update().get(pk=vault_id)
-    if (vault.kdf_salt, vault.wrap_nonce, vault.wrapped_key) != (
-            expected_kdf_salt, expected_wrap_nonce, expected_wrapped_key):
-        raise RevisionConflict("The vault key wrapper changed. Reload before trying again.")
-    if kdf_salt == vault.kdf_salt or wrap_nonce == vault.wrap_nonce or wrapped_key == vault.wrapped_key:
-        raise ValidationError("A fresh salt, nonce and wrapped key are required.")
+    _check_wrapper(vault, (expected_kdf_salt, expected_wrap_nonce, expected_wrapped_key),
+                   (kdf_salt, wrap_nonce, wrapped_key))
     vault.kdf_salt, vault.wrap_nonce, vault.wrapped_key = kdf_salt, wrap_nonce, wrapped_key
     vault.save(update_fields=["kdf_salt", "wrap_nonce", "wrapped_key", "updated_at"])
+    return vault
+
+
+def _check_wrapper(vault, expected, replacement=None):
+    current = (vault.kdf_salt, vault.wrap_nonce, vault.wrapped_key)
+    if expected != current:
+        raise RevisionConflict("The vault key wrapper changed. Reload before trying again.")
+    if replacement is not None and any(old == new for old, new in zip(current, replacement)):
+        raise ValidationError("A fresh salt, nonce and wrapped key are required.")
+
+
+def _check_key_version(vault, expected_key_version):
+    if vault.key_version != expected_key_version:
+        raise KeyVersionConflict("The vault encryption key changed. Unlock the vault again.")
+
+
+def _recovery_pair(envelope):
+    return (None, None) if envelope is None else (envelope["nonce"], envelope["wrapped_key"])
+
+
+def _check_recovery(vault, expected_recovery):
+    if (vault.recovery_nonce, vault.recovery_wrapped_key) != _recovery_pair(expected_recovery):
+        raise RevisionConflict("The vault recovery key changed. Reload before trying again.")
+
+
+@transaction.atomic
+def setup_recovery(*, user, vault_id, expected_key_version, expected_kdf_salt, expected_wrap_nonce,
+                   expected_wrapped_key, expected_recovery, recovery):
+    _require_user(user)
+    vault = Vault.objects.for_user(user).select_for_update().get(pk=vault_id)
+    _check_key_version(vault, expected_key_version)
+    _check_wrapper(vault, (expected_kdf_salt, expected_wrap_nonce, expected_wrapped_key))
+    _check_recovery(vault, expected_recovery)
+    nonce, wrapped_key = _recovery_pair(recovery)
+    if recovery is not None and (nonce == vault.recovery_nonce or wrapped_key == vault.recovery_wrapped_key):
+        raise ValidationError("A fresh recovery wrapper is required.")
+    vault.recovery_nonce, vault.recovery_wrapped_key = nonce, wrapped_key
+    vault.save(update_fields=["recovery_nonce", "recovery_wrapped_key", "updated_at"])
+    return vault
+
+
+@transaction.atomic
+def recover_vault(*, user, vault_id, expected_key_version, expected_kdf_salt, expected_wrap_nonce,
+                  expected_wrapped_key, expected_recovery, kdf_salt, wrap_nonce, wrapped_key):
+    _require_user(user)
+    vault = Vault.objects.for_user(user).select_for_update().get(pk=vault_id)
+    _check_key_version(vault, expected_key_version)
+    _check_wrapper(vault, (expected_kdf_salt, expected_wrap_nonce, expected_wrapped_key), (kdf_salt, wrap_nonce, wrapped_key))
+    if expected_recovery is None:
+        raise ValidationError("An active recovery wrapper is required.")
+    _check_recovery(vault, expected_recovery)
+    vault.kdf_salt, vault.wrap_nonce, vault.wrapped_key = kdf_salt, wrap_nonce, wrapped_key
+    vault.recovery_nonce = vault.recovery_wrapped_key = None
+    vault.save(update_fields=["kdf_salt", "wrap_nonce", "wrapped_key", "recovery_nonce", "recovery_wrapped_key", "updated_at"])
+    return vault
+
+
+@transaction.atomic
+def rotate_key(*, user, vault_id, expected_key_version, expected_entries_version, expected_kdf_salt,
+               expected_wrap_nonce, expected_wrapped_key, kdf_salt, wrap_nonce, wrapped_key, entries):
+    _require_user(user)
+    vault = Vault.objects.for_user(user).select_for_update().get(pk=vault_id)
+    _check_key_version(vault, expected_key_version)
+    if vault.entries_version != expected_entries_version:
+        raise RevisionConflict("The vault changed during rotation.")
+    _check_wrapper(vault, (expected_kdf_salt, expected_wrap_nonce, expected_wrapped_key),
+                   (kdf_salt, wrap_nonce, wrapped_key))
+
+    # The caller supplies strictly validated opaque envelopes. Lock order is the same
+    # as every other writer, so this is the exact snapshot or the request fails.
+    replacements = {item["id"]: item for item in entries}
+    rows = list(vault.entries.only("id", "nonce", "ciphertext"))
+    if len(entries) != len(replacements) or replacements.keys() != {row.pk for row in rows}:
+        raise ValidationError("Rotation must include every entry, including Trash, exactly once.")
+    nonces = {item["nonce"] for item in entries}
+    if (len(nonces) != len(rows) or any(row.nonce in nonces for row in rows)
+            or vault.nonce_reservations.filter(nonce__in=nonces).exists()):
+        raise NonceConflict("Rotation requires fresh entry nonces.")
+    for row in rows:
+        item = replacements[row.pk]
+        if item["ciphertext"] == row.ciphertext or len(item["ciphertext"]) != len(row.ciphertext):
+            raise ValidationError("Rotation requires new ciphertext of the same size.")
+        row.nonce, row.ciphertext = item["nonce"], item["ciphertext"]
+    # Keep historical nonce reservations and backup receipts across rotations.
+    NonceReservation.objects.bulk_create([NonceReservation(vault=vault, nonce=nonce) for nonce in nonces], batch_size=100)
+    # Limit statement size and memory even when entries approach the ciphertext limit.
+    for start in range(0, len(rows), 32):
+        VaultEntry.objects.bulk_update(rows[start:start + 32], ["nonce", "ciphertext"])
+    vault.kdf_salt, vault.wrap_nonce, vault.wrapped_key = kdf_salt, wrap_nonce, wrapped_key
+    vault.recovery_nonce = vault.recovery_wrapped_key = None
+    vault.key_version += 1
+    vault.entries_version = uuid.uuid4()
+    vault.save(update_fields=["kdf_salt", "wrap_nonce", "wrapped_key", "recovery_nonce", "recovery_wrapped_key",
+                              "key_version", "entries_version", "updated_at"])
     return vault
 
 
@@ -78,10 +173,11 @@ def list_entries(*, user, vault_id, state="active"):
     return entries.order_by("-updated_at", "id")
 
 
-def _locked_entry(user, entry_id):
+def _locked_entry(user, entry_id, expected_key_version):
     # All writers take the vault lock first, including capacity checks and restores.
     reference = VaultEntry.objects.for_user(user).only("vault_id").get(pk=entry_id)
-    Vault.objects.for_user(user).select_for_update().get(pk=reference.vault_id)
+    vault = Vault.objects.for_user(user).select_for_update().get(pk=reference.vault_id)
+    _check_key_version(vault, expected_key_version)
     return VaultEntry.objects.for_user(user).select_for_update().get(pk=entry_id)
 
 
@@ -97,9 +193,10 @@ def _change_entries_version(vault_id):
 
 
 @transaction.atomic
-def create_entry(*, user, vault_id, entry_id, nonce, ciphertext):
+def create_entry(*, user, vault_id, entry_id, nonce, ciphertext, expected_key_version=1):
     _require_user(user)
     vault = Vault.objects.for_user(user).select_for_update().get(pk=vault_id)
+    _check_key_version(vault, expected_key_version)
     # The client generates the UUID before encryption so it can bind it as AAD.
     entry = VaultEntry(id=entry_id, vault=vault, nonce=nonce, ciphertext=ciphertext)
     if NonceReservation.objects.filter(vault=vault, nonce=nonce).exists():
@@ -113,9 +210,9 @@ def create_entry(*, user, vault_id, entry_id, nonce, ciphertext):
 
 
 @transaction.atomic
-def update_entry(*, user, entry_id, expected_revision, nonce, ciphertext, expected_state_version=1):
+def update_entry(*, user, entry_id, expected_revision, nonce, ciphertext, expected_state_version=1, expected_key_version=1):
     _require_user(user)
-    entry = _locked_entry(user, entry_id)
+    entry = _locked_entry(user, entry_id, expected_key_version)
     _check_versions(entry, expected_revision, expected_state_version)
     if entry.deleted_at is not None:
         raise RevisionConflict("Restore the entry before editing it.")
@@ -134,10 +231,10 @@ def update_entry(*, user, entry_id, expected_revision, nonce, ciphertext, expect
 
 
 @transaction.atomic
-def delete_entry(*, user, entry_id, expected_revision, expected_state_version=1):
+def delete_entry(*, user, entry_id, expected_revision, expected_state_version=1, expected_key_version=1):
     """Move an active encrypted entry to Trash; content and its AAD stay unchanged."""
     _require_user(user)
-    entry = _locked_entry(user, entry_id)
+    entry = _locked_entry(user, entry_id, expected_key_version)
     _check_versions(entry, expected_revision, expected_state_version)
     if entry.deleted_at is not None or entry.state_version >= 2147483647:
         raise RevisionConflict("The entry state changed. Refresh before trying again.")
@@ -149,9 +246,9 @@ def delete_entry(*, user, entry_id, expected_revision, expected_state_version=1)
 
 
 @transaction.atomic
-def restore_entry(*, user, entry_id, expected_revision, expected_state_version):
+def restore_entry(*, user, entry_id, expected_revision, expected_state_version, expected_key_version=1):
     _require_user(user)
-    entry = _locked_entry(user, entry_id)
+    entry = _locked_entry(user, entry_id, expected_key_version)
     _check_versions(entry, expected_revision, expected_state_version)
     if entry.deleted_at is None or entry.state_version >= 2147483647:
         raise RevisionConflict("The entry state changed. Refresh before trying again.")
@@ -163,9 +260,9 @@ def restore_entry(*, user, entry_id, expected_revision, expected_state_version):
 
 
 @transaction.atomic
-def purge_entry(*, user, entry_id, expected_revision, expected_state_version):
+def purge_entry(*, user, entry_id, expected_revision, expected_state_version, expected_key_version=1):
     _require_user(user)
-    entry = _locked_entry(user, entry_id)
+    entry = _locked_entry(user, entry_id, expected_key_version)
     _check_versions(entry, expected_revision, expected_state_version)
     if entry.deleted_at is None:
         raise RevisionConflict("Only entries in Trash can be permanently deleted.")
@@ -175,10 +272,11 @@ def purge_entry(*, user, entry_id, expected_revision, expected_state_version):
 
 
 @transaction.atomic
-def restore_entries(*, user, vault_id, backup_id, archive_digest, entries):
+def restore_entries(*, user, vault_id, backup_id, archive_digest, entries, expected_key_version=1):
     """Add all fresh envelopes or none. Repeating one archive cannot duplicate it."""
     _require_user(user)
     vault = Vault.objects.for_user(user).select_for_update().get(pk=vault_id)
+    _check_key_version(vault, expected_key_version)
     receipt = RestoreReceipt.objects.filter(vault=vault, backup_id=backup_id).first()
     if receipt:
         if receipt.archive_digest != archive_digest or receipt.entry_count != len(entries):

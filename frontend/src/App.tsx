@@ -12,6 +12,7 @@ import {
   KeyRound,
   LayoutDashboard,
   LockKeyhole,
+  Paperclip,
   Plus,
   Search,
   Settings2,
@@ -41,6 +42,7 @@ import EntryDialog from './vault/EntryDialog'
 import GeneratorPanel from './vault/GeneratorPanel'
 import SecurityPanel from './vault/SecurityPanel'
 import MasterPasswordPanel from './vault/MasterPasswordPanel'
+import RecoveryKeyPanel from './vault/RecoveryKeyPanel'
 import BackupPanel from './vault/BackupPanel'
 import OfflineBackupPanel from './vault/OfflineBackupPanel'
 import HealthPanel from './vault/HealthPanel'
@@ -535,6 +537,7 @@ function App({ initialAccountLink }: { initialAccountLink: ReturnType<typeof tak
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 text-[12px] font-medium text-slate-200">
                           <span className="truncate">{account.name}</span>
+                          {Boolean(account.record?.data.attachments?.length) && <span title="Has attachments" className="shrink-0 text-slate-400"><Paperclip size={13} aria-label="Has attachments" /></span>}
                           {account.favorite && (
                             <Star
                               size={11}
@@ -717,6 +720,8 @@ function App({ initialAccountLink }: { initialAccountLink: ReturnType<typeof tak
               <HealthPanel key={`${account.user?.id ?? 'guest'}:${vault.lockEpoch}`} entries={vault.entries} unlocked={vault.unlocked} busy={vault.busy} onUnlock={() => setActivePage('All Passwords')} onEdit={(entry) => { setEditingEntry(entry); setShowAddDialog(true) }} />
               <SecurityPanel key={`${account.user?.id ?? 'guest'}:${vault.loaded}`} controller={vault.controller} signedIn={Boolean(account.user)} />
               {account.user && <MasterPasswordPanel key={`${account.user.id}:${vault.selectedId}:${vault.lockEpoch}:${vault.unlocked}`} controller={vault.controller} onUnlock={() => setActivePage('All Passwords')} />}
+              {account.user && <RecoveryKeyPanel key={`recovery:${account.user.id}:${vault.selectedId}:${vault.lockEpoch}`} controller={vault.controller} onUnlock={() => setActivePage('All Passwords')} />}
+              {account.user && <MasterPasswordPanel rotate key={`rotation:${account.user.id}:${vault.selectedId}:${vault.lockEpoch}:${vault.unlocked}`} controller={vault.controller} onUnlock={() => setActivePage('All Passwords')} />}
             </>
           ) : (
             <section className="mt-9 rounded-2xl border border-white/10 bg-vault-surface p-6">

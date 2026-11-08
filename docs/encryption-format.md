@@ -64,7 +64,8 @@ Generate a new salt and independent data key for each vault. Never reuse a
 nonce under the same key. The explicit [master-password change protocol](master-password.md)
 can replace the wrapping salt, nonce and encrypted data key under a vault lock
 and comparison against the expected current wrapper. The data key itself stays
-unchanged. Data-key rotation and ownership transfer remain unsupported.
+unchanged. [Data-key rotation](key-rotation.md) replaces the key and re-encrypts
+the entries. Ownership transfer remains unsupported.
 
 ## Entry envelope
 
@@ -72,8 +73,9 @@ The client generates the entry UUID **before encryption**. Every revision gets
 a fresh random 12-byte nonce and encrypts the complete UTF-8 JSON payload using
 AES-256-GCM under the vault data key, with a full 16-byte tag appended to the
 ciphertext. Store the result in `ciphertext` and the encoded nonce in `nonce`.
-The plaintext maximum is 65,536 bytes; stored decoded ciphertext maximum is
-65,552 bytes. The storage validator checks encoding and size, not authenticity.
+Entry text is limited to 64 KiB. The decoded ciphertext maximum is 3 MiB plus
+the 16-byte tag to allow encrypted attachments. The storage validator checks
+encoding and size, not authenticity.
 
 Exact entry AAD (UTF-8, no trailing newline):
 
@@ -113,6 +115,10 @@ optional Boolean defaulting to `false`. Clients validate these types and the
 schema version after decryption. None of these fields has a plaintext database
 column. Search, favorites and category filtering happen locally after unlock;
 the server offers ownership-scoped encrypted-record synchronization only.
+
+For a record with files, the client encrypts a version 3 payload containing
+the original version 1 or 2 record and its [attachments](attachments.md).
+The envelope and AAD are identical for every supported payload version.
 
 ## Persistence, nonce lifetime and versioning
 

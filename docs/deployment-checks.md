@@ -61,9 +61,9 @@ of API responses, configure static assets and database access, verify backup
 restore, and exercise session/CSRF behavior on the actual origin. At a reverse
 proxy, trust forwarded HTTPS/IP headers only when the proxy overwrites them and
 direct access to Django is blocked. These changes do not alter existing proxy
-trust or publish the application. Master-password rewrapping is available;
-independent audit, vault-key recovery, data-key rotation and offline synchronization
-remain outstanding.
+trust or publish the application. Master-password changes, data-key rotation and
+[vault recovery](vault-recovery.md) are available. Independent audit and offline
+editing with synchronization remain outstanding.
 
 References: [Django deployment checklist](https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/),
 [Django system checks](https://docs.djangoproject.com/en/6.0/topics/checks/).

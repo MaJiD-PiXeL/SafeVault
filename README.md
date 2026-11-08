@@ -122,17 +122,29 @@ the entry list supports sorting and clearing filters. See
 [local password health](docs/password-health.md). Before deployment, run the
 [production configuration checks](docs/deployment-checks.md).
 For a hosted beta, use the [Linux Compose deployment guide](docs/compose-deployment.md).
+For local testing, use the [isolated beta launcher](docs/local-beta.md).
 
 **Secure Notes** and **Payment Cards** store encrypted notes, cardholder names,
 card numbers and expiry dates. Unlocked vaults refresh changes from other
 devices. Use **Offline Backup** to read a downloaded encrypted archive with its
 backup password. [Backup and recovery guide](docs/backups.md)
 
+Add or download [encrypted attachments](docs/attachments.md) from an entry.
+Attachments stay with the entry through Trash, key rotation and backups.
+
 Open **Security Center → Change master password** while unlocked to replace
 the vault's master password. The current password is checked locally; entries
 and Trash preserve their encrypted bytes. The vault locks on success and uses
 the new password on its next unlock. Account and backup passwords are separate.
 See [master-password changes and their limits](docs/master-password.md).
+
+Set up a **Vault recovery key** in Security Center to reset a forgotten master
+password while preserving entries and Trash. Save it outside the vault. See
+[vault recovery and its limits](docs/vault-recovery.md).
+
+Use **Security Center → Rotate vault encryption key** to encrypt all records,
+including Trash, under a fresh key and set a new master password. Other devices
+must unlock again. See [key rotation and deployment requirements](docs/key-rotation.md).
 
 **Move to Trash** now keeps an encrypted entry recoverable. Open **Trash** to
 restore it or explicitly delete it forever. Trash has no automatic expiry and
@@ -141,8 +153,7 @@ additive backend migration before using this frontend; see
 [Trash behavior and API compatibility](docs/trash.md).
 
 Public release requires an independent security audit and hosted deployment
-validation. Data-key rotation, recovery keys and offline editing remain
-outstanding.
+validation. Offline editing remains outstanding.
 Use synthetic test entries. Existing CLI files, Fernet data and legacy databases
 have not been migrated or removed. The local `backend/.env` remains untracked
 and ignored; its historical Git copies have not been removed.

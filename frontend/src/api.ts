@@ -17,11 +17,13 @@ export type RecoveryEmail = { email: string | null; verified: boolean }
 
 export class ApiError extends Error {
   status: number
+  readonly code?: string
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = code
   }
 }
 
@@ -66,7 +68,7 @@ export function createAccountApi(baseUrl = import.meta.env?.VITE_API_BASE_URL ??
           if (errors.length) message = errors.join(' ')
         }
       }
-      throw new ApiError(message, response.status)
+      throw new ApiError(message, response.status, isObject(data) && typeof data.code === 'string' ? data.code : undefined)
     }
     return data
   }

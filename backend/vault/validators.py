@@ -5,6 +5,9 @@ import binascii
 from django.core.exceptions import ValidationError
 from django.utils.deconstruct import deconstructible
 
+MAX_ENTRY_CIPHERTEXT_BYTES = 3 * 1024 * 1024 + 16
+MAX_ENTRY_JSON_BYTES = 4 * ((MAX_ENTRY_CIPHERTEXT_BYTES + 2) // 3) + 4096
+
 
 @deconstructible
 class Base64Bytes:

@@ -3,6 +3,7 @@ import { RotateCcw, Search, Trash2 } from 'lucide-react'
 import type { VaultController } from './controller'
 import { entrySummary } from './format'
 import type { EncryptedEntry, UnlockedEntry } from './format'
+import AttachmentList from './AttachmentList'
 
 const sameVersion = (a: EncryptedEntry | null, b: EncryptedEntry) =>
   a?.id === b.id && a.revision === b.revision && a.state_version === b.state_version
@@ -64,6 +65,7 @@ export default function TrashPanel({ controller, entries }: { controller: VaultC
             {confirming && <button disabled={state.busy} onClick={() => setConfirmation(null)} className="rounded-lg border border-white/15 px-3 py-2 text-xs disabled:opacity-50">Cancel deletion</button>}
           </div>
         </div>
+        {data.attachments && <div className="mt-3 max-w-md"><AttachmentList files={data.attachments} /></div>}
         {confirming && <p role="alert" className="mt-4 text-xs leading-6 text-red-300">This permanently removes the encrypted entry from this vault. You cannot undo it here. Previously downloaded backups may still contain copies.</p>}
       </article>
     })}</div>

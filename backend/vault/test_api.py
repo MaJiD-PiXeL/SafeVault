@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client, TestCase, override_settings
 
 from .models import NonceReservation, SecuritySettings, Vault, VaultEntry
+from .validators import MAX_ENTRY_CIPHERTEXT_BYTES, MAX_ENTRY_JSON_BYTES
 
 
 FIXTURE = json.loads((Path(__file__).resolve().parents[2] / "frontend/tests/fixtures/encryption-v1.json").read_text(encoding="utf-8"))
@@ -100,9 +101,20 @@ class EncryptedVaultAPITests(TestCase):
             response = self.write("post", "/api/vaults/", {**FIXTURE["vault"], "id": str(uuid.uuid4()), name: value})
             self.assertEqual(response.status_code, 400)
         for changes in ({"nonce": "bad"}, {"ciphertext": "plaintext"}, {"id": uuid.uuid4().hex},
-                        {"ciphertext": base64.b64encode(bytes(65553)).decode()}):
+                        {"ciphertext": base64.b64encode(bytes(MAX_ENTRY_CIPHERTEXT_BYTES + 1)).decode()}):
             self.assertEqual(self.add(**changes).status_code, 400)
         self.assertEqual(VaultEntry.objects.count(), 0)
+
+    def test_larger_envelopes_use_the_same_encrypted_crud_and_reject_plaintext_fields(self):
+        ciphertext = base64.b64encode(bytes(1024 * 1024)).decode()
+        self.assertEqual(self.add(ciphertext=ciphertext, attachments=[{"name": "plaintext.txt"}]).status_code, 400)
+        created = self.add(ciphertext=ciphertext)
+        self.assertEqual(created.status_code, 201)
+        detail = self.path + created.json()["id"] + "/"
+        edited = self.write("patch", detail, {"ciphertext": ciphertext, "nonce": base64.b64encode(bytes(12)).decode(), "expected_revision": 1})
+        self.assertEqual(edited.status_code, 200)
+        self.assertEqual(edited.json()["revision"], 2)
+        self.assertEqual(self.client.get(self.path).json()["results"][0]["ciphertext"], ciphertext)
 
     def test_expected_revision_requires_a_real_positive_integer(self):
         row = self.add().json()
@@ -136,9 +148,10 @@ class EncryptedVaultAPITests(TestCase):
             self.assertIn("Cookie", response["Vary"])
 
     def test_streamed_json_has_a_hard_size_and_depth_bound(self):
-        oversized = json.dumps({"ciphertext": "a" * (128 * 1024)})
+        oversized = json.dumps({"ciphertext": "a" * MAX_ENTRY_JSON_BYTES})
         response = self.client.post(self.path, oversized, content_type="application/json", HTTP_X_CSRFTOKEN=self.token)
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Request body too large.")
         nested = '[' * 2000 + '0' + ']' * 2000
         response = self.client.post(self.path, nested, content_type="application/json", HTTP_X_CSRFTOKEN=self.token)
         self.assertEqual(response.status_code, 400)

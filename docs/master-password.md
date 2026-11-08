@@ -55,8 +55,9 @@ Each unlock fetches current vault metadata before deriving a key, so updated
 clients do not unlock a cached old wrapper after another device changes the
 password. Already unlocked devices retain the same data key and access.
 This change does not revoke copied data keys, old wrapper snapshots, previous
-backups, or old clients. Revoking compromised copies requires a separate data-key
-rotation protocol, which is not implemented.
+backups, or old clients. Use [vault encryption key rotation](key-rotation.md) to
+protect the current vault with a fresh key. Neither operation can take back copies
+that someone already obtained.
 
 Once an update is dispatched, cached metadata is invalidated. Success locks the
 client and retains the confirmed new wrapper. Conflicts, network failures,

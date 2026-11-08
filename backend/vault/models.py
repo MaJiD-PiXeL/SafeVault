@@ -5,7 +5,7 @@ from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
-from .validators import Base64Bytes
+from .validators import Base64Bytes, MAX_ENTRY_CIPHERTEXT_BYTES
 
 
 class ValidatedModel(models.Model):
@@ -37,6 +37,9 @@ class Vault(ValidatedModel):
     kdf_salt = models.CharField(max_length=24, validators=[Base64Bytes(16, 16)])
     wrap_nonce = models.CharField(max_length=16, validators=[Base64Bytes(12, 12)])
     wrapped_key = models.CharField(max_length=64, validators=[Base64Bytes(48, 48)])
+    recovery_nonce = models.CharField(max_length=16, null=True, blank=True, editable=False, validators=[Base64Bytes(12, 12)])
+    recovery_wrapped_key = models.CharField(max_length=64, null=True, blank=True, editable=False, validators=[Base64Bytes(48, 48)])
+    key_version = models.PositiveIntegerField(default=1, editable=False)
     entries_version = models.UUIDField(default=uuid.uuid4, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -45,6 +48,10 @@ class Vault(ValidatedModel):
 
     class Meta:
         constraints = [
+            models.CheckConstraint(condition=models.Q(key_version__gte=1), name="vault_key_version_positive"),
+            models.CheckConstraint(condition=(models.Q(recovery_nonce__isnull=True, recovery_wrapped_key__isnull=True) |
+                                               models.Q(recovery_nonce__isnull=False, recovery_wrapped_key__isnull=False)),
+                                   name="vault_recovery_pair"),
             models.CheckConstraint(
                 condition=models.Q(
                     format_version=1, cipher="AES-256-GCM", kdf="argon2id",
@@ -69,7 +76,7 @@ class VaultEntry(ValidatedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name="entries")
     nonce = models.CharField(max_length=16, validators=[Base64Bytes(12, 12)])
-    ciphertext = models.TextField(validators=[Base64Bytes(17, 65552)])
+    ciphertext = models.TextField(validators=[Base64Bytes(17, MAX_ENTRY_CIPHERTEXT_BYTES)])
     revision = models.PositiveIntegerField(default=1, validators=[MinValueValidator(1)])
     state_version = models.PositiveIntegerField(default=1, validators=[MinValueValidator(1), MaxValueValidator(2147483647)])
     deleted_at = models.DateTimeField(null=True, blank=True, db_index=True)

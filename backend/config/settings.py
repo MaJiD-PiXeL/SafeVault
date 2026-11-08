@@ -243,7 +243,8 @@ AXES_ENABLE_RETRY_AFTER_HEADER = True
 
 # Extra budgets cap all requests, including malformed bodies and registrations.
 AUTH_REQUEST_LIMITS = {
-    "login": (30, 60), "register": (5, 3600), "restore": (6, 3600),
+    "login": (30, 60), "register": (5, 3600), "restore": (6, 3600), "key_rotation": (6, 3600),
+    "vault_recovery": (12, 3600),
     "recovery-enroll": (20, 3600), "recovery-enroll-user": (5, 3600), "recovery-enroll-email": (5, 3600),
     "recovery-request": (10, 3600), "recovery-request-user": (3, 3600),
     "recovery-confirm": (30, 3600),

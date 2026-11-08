@@ -84,9 +84,10 @@ The **entire content** is one authenticated ciphertext, including date and recor
 membership, so truncating/removing/reordering records cannot yield a valid partial
 backup. Decrypted content has exactly version=1, exported_at (ISO timestamp),
 source_vault_id (UUID), and entries (array). Each entry contains original_id,
-original_revision, created_at, updated_at and payload. Payload is the complete v1
-EntryPayload, including title, username, password, website, notes, category, favorite
-and schema_version. Source identities and timestamps are not exposed in the header.
+original_revision, created_at, updated_at and payload. It contains the complete
+record, including any [encrypted attachments](attachments.md), using the same
+payload schema as a live entry. Source identities and timestamps are not exposed
+in the header.
 
 The importer validates header/profile/encoding/size before key derivation, verifies
 the whole AES-GCM tag, validates all record schemas, rejects duplicate source IDs,
@@ -94,7 +95,7 @@ and publishes no partial plaintext on failure. Unsupported versions and unknown
 fields are rejected. Empty vault exports are valid; an empty backup needs no write.
 
 Archive limits are 48 MiB for a file, 32 MiB for decrypted content, 5,000 records and
-64 KiB per entry payload. File size is checked before browser file reads and again
+64 KiB of text per entry, plus its bounded attachments. File size is checked before browser file reads and again
 by the standalone parser. Formats are not compressed, avoiding decompression bombs.
 
 ## Server commit and retry safety
@@ -139,8 +140,9 @@ create another copy, use a different destination vault or a newly exported archi
 Do not purge receipts while a vault is live; they are not authentication counters.
 
 The restore body limit is 36 MiB and its request budget is six per hour per peer IP,
-checked after authentication/ownership and before parsing the body. Other endpoints
-keep their 128 KiB bound. The custom BaseParser delegates JSON decoding to DRF while
+checked after authentication/ownership and before parsing the body. Key rotation
+uses the same body limit; entry creates and edits use a smaller limit that allows
+one attachment envelope. Other endpoints keep their 128 KiB bound. The custom BaseParser delegates JSON decoding to DRF while
 bounding the stream directly; it avoids the installed DRF's eager raw-body buffering
 for JSONParser subclasses. Concurrent vault writes share the vault lock. Ordinary
 create/edit and restores enforce the same 5,000-entry/32 MiB encoded-ciphertext vault
@@ -167,5 +169,5 @@ decrypts the browser archive and both original/restored records to verify exact 
 and distinct nonces. No real vault data is used for test records.
 
 Run the existing frontend tests/build/lint and Django tests as documented in README.
-This phase does not implement master-password changes, offline sync, automated
-backups, recovery keys, legacy migration, or an independent security audit.
+Offline edits and sync, automated backups, legacy migration, and an independent
+security audit remain outside the backup workflow.

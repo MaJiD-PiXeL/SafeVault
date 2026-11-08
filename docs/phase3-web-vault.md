@@ -113,9 +113,10 @@ deletion, capacity and backup semantics.
 Entry pages contain 50 records. Clients construct local page paths rather than
 following server URLs, check counts/duplicates and require a complete snapshot.
 Opening is limited to 5,000 entries and 32 MiB of encoded ciphertext; exceeding
-limits returns an explicit error without silently omitting entries. Each entry
-allows 64 KiB plaintext plus the 16-byte tag. A bounded JSON parser limits even
-streamed bodies to 128 KiB and rejects excessive nesting. Vault creation is
+limits returns an explicit error without silently omitting entries. Entry text
+is limited to 64 KiB, and [attachments](attachments.md) fit inside a bounded
+3 MiB plaintext envelope. A bounded JSON parser limits streamed requests before
+decoding and rejects excessive nesting. Vault creation is
 capped at ten per account under a row lock. The UI creates the first vault and
 can select among multiple existing vaults.
 
@@ -153,8 +154,14 @@ snapshot when it changes. All pages must share a version. A stale editor can
 save its draft as a new copy, and edits to the original still require matching
 entry versions. The sync path covers active and trashed records.
 
-Independent audit, vault-key recovery/data-key rotation, rollback detection,
-offline editing, large-vault streaming, attachments and
+Vault encryption key rotation re-encrypts active and trashed records atomically
+and blocks writes from older key versions. See [the rotation protocol](key-rotation.md).
+
+[Vault recovery](vault-recovery.md) is opt-in and uses a recovery key saved by
+the user. A successful recovery replaces the master password and consumes the key.
+
+Independent audit, rollback detection,
+offline editing, large-vault streaming and
 production hardening remain future work. No legacy data
 migration or scheduled cleanup/sync is introduced. Use synthetic test entries.
 

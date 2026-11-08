@@ -51,6 +51,11 @@ Gunicorn and the worker start. Caddy waits for the API's readiness check.
 The check allows the documented HSTS warnings while requiring configuration
 errors to be resolved. Review the strict check separately for the chosen host.
 
+When upgrading an existing deployment to enable key rotation, apply the migration
+and replace all API workers before exposing the new frontend. See
+[key rotation deployment requirements](key-rotation.md#protocol-and-deployment)
+before planning a rollback.
+
 ```sh
 docker compose --env-file deploy/.env run --rm --no-deps migrate \
   python manage.py check --deploy --fail-level WARNING

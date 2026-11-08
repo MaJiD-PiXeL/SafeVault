@@ -8,10 +8,13 @@ from accounts.views import AccountAPIView
 from accounts.parsers import BoundedJSONParser
 from accounts.security import limit_requests
 from .models import RestoreReceipt, SecuritySettings, Vault, VaultEntry
-from .serializers import (EntryCreateSerializer, EntryDeleteSerializer, EntrySerializer,
-                          EntryUpdateSerializer, MasterPasswordSerializer, RestoreSerializer, SettingsSerializer, VaultSerializer)
-from .services import (NonceConflict, RevisionConflict, create_entry, create_vault,
-                       change_master_password, delete_entry, list_entries, purge_entry, restore_entry, restore_entries, update_entry)
+from .serializers import (EntryDeleteSerializer, EntrySerializer, EntryUpdateSerializer, EntryWriteSerializer,
+                          KeyRotationSerializer, MasterPasswordSerializer, RecoverVaultSerializer,
+                          RecoverySetupSerializer, RestoreSerializer, SettingsSerializer, VaultSerializer)
+from .services import (KeyVersionConflict, NonceConflict, RevisionConflict, create_entry, create_vault,
+                       change_master_password, delete_entry, list_entries, purge_entry, recover_vault, restore_entry,
+                       restore_entries, rotate_key, setup_recovery, update_entry)
+from .validators import MAX_ENTRY_JSON_BYTES
 
 
 class Conflict(APIException):
@@ -26,6 +29,8 @@ class VaultAPIView(AccountAPIView):
     def handle_exception(self, exc):
         if isinstance(exc, (Vault.DoesNotExist, VaultEntry.DoesNotExist)):
             exc = NotFound("Vault item not found.")
+        elif isinstance(exc, KeyVersionConflict):
+            exc = Conflict({"code": "vault_key_changed", "detail": str(exc)})
         elif isinstance(exc, (RevisionConflict, NonceConflict, IntegrityError)):
             exc = Conflict()
         elif isinstance(exc, ModelValidationError):
@@ -56,41 +61,75 @@ class MasterPasswordView(VaultAPIView):
         return Response(VaultSerializer(vault).data)
 
 
+class RecoverySetupView(VaultAPIView):
+    def post(self, request, vault_id):
+        Vault.objects.for_user(request.user).get(pk=vault_id)
+        limit_requests(request, "vault_recovery", subject=str(request.user.pk))
+        serializer = RecoverySetupSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        vault = setup_recovery(user=request.user, vault_id=vault_id, **serializer.validated_data)
+        return Response(VaultSerializer(vault).data)
+
+
+class RecoverVaultView(VaultAPIView):
+    def post(self, request, vault_id):
+        Vault.objects.for_user(request.user).get(pk=vault_id)
+        limit_requests(request, "vault_recovery", subject=str(request.user.pk))
+        serializer = RecoverVaultSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        vault = recover_vault(user=request.user, vault_id=vault_id, **serializer.validated_data)
+        return Response(VaultSerializer(vault).data)
+
+
 class EntryPagination(PageNumberPagination):
     page_size = 50
 
 
+class EntryJSONParser(BoundedJSONParser):
+    max_bytes = MAX_ENTRY_JSON_BYTES
+
+    def parse(self, stream, media_type=None, parser_context=None):
+        if parser_context and parser_context["request"].method not in ("POST", "PATCH"):
+            return BoundedJSONParser().parse(stream, media_type, parser_context)
+        return super().parse(stream, media_type, parser_context)
+
+
 class EntriesVersionView(VaultAPIView):
     def get(self, request, vault_id):
-        vault = Vault.objects.for_user(request.user).only("entries_version").get(pk=vault_id)
-        return Response({"version": str(vault.entries_version)})
+        vault = Vault.objects.for_user(request.user).only("entries_version", "key_version").get(pk=vault_id)
+        return Response({"version": str(vault.entries_version), "key_version": vault.key_version})
 
 
 class EntriesView(VaultAPIView):
+    parser_classes = [EntryJSONParser]
+
     def get(self, request, vault_id):
-        owned = Vault.objects.for_user(request.user).only("entries_version")
-        version = owned.get(pk=vault_id).entries_version
+        owned = Vault.objects.for_user(request.user).only("entries_version", "key_version")
+        snapshot = owned.get(pk=vault_id)
         entries = list_entries(user=request.user, vault_id=vault_id, state=request.query_params.get("state", "active"))
         paginator = EntryPagination()
         page = paginator.paginate_queryset(entries, request)
         response = paginator.get_paginated_response(EntrySerializer(page, many=True).data)
-        if version != owned.get(pk=vault_id).entries_version:
+        if snapshot.entries_version != owned.get(pk=vault_id).entries_version:
             raise Conflict("The vault changed while loading. Refresh to try again.")
-        response.data["version"] = str(version)
+        response.data["version"] = str(snapshot.entries_version)
+        response.data["key_version"] = snapshot.key_version
         return response
 
     def post(self, request, vault_id):
         # Scope ownership before examining another account's identifiers.
         Vault.objects.for_user(request.user).get(pk=vault_id)
-        serializer = EntryCreateSerializer(data=request.data)
+        serializer = EntryWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        entry = create_entry(user=request.user, vault_id=vault_id, entry_id=data["id"],
-                             nonce=data["nonce"], ciphertext=data["ciphertext"])
+        entry = create_entry(user=request.user, vault_id=vault_id, entry_id=data["id"], nonce=data["nonce"],
+                             ciphertext=data["ciphertext"], expected_key_version=data["expected_key_version"])
         return Response(EntrySerializer(entry).data, status=201)
 
 
 class EntryView(VaultAPIView):
+    parser_classes = [EntryJSONParser]
+
     def get(self, request, vault_id, entry_id):
         return Response(EntrySerializer(self.owned_entry(request, vault_id, entry_id)).data)
 
@@ -142,9 +181,21 @@ class SecuritySettingsView(VaultAPIView):
         return Response(serializer.data)
 
 
-class RestoreJSONParser(BoundedJSONParser):
-    # Only this authenticated, rate-limited endpoint accepts larger encrypted batches.
+class EncryptedBatchJSONParser(BoundedJSONParser):
+    # Only authenticated, rate-limited batch endpoints accept these larger bodies.
     max_bytes = 36 * 1024 * 1024
+
+
+class KeyRotationView(VaultAPIView):
+    parser_classes = [EncryptedBatchJSONParser]
+
+    def post(self, request, vault_id):
+        Vault.objects.for_user(request.user).get(pk=vault_id)
+        limit_requests(request, "key_rotation", subject=str(request.user.pk))
+        serializer = KeyRotationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        vault = rotate_key(user=request.user, vault_id=vault_id, **serializer.validated_data)
+        return Response(VaultSerializer(vault).data)
 
 
 def receipt_data(receipt, already_restored=True):
@@ -153,7 +204,7 @@ def receipt_data(receipt, already_restored=True):
 
 
 class RestoreView(VaultAPIView):
-    parser_classes = [RestoreJSONParser]
+    parser_classes = [EncryptedBatchJSONParser]
 
     def post(self, request, vault_id):
         Vault.objects.for_user(request.user).get(pk=vault_id)

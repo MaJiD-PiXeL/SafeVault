@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from .models import SecuritySettings, Vault, VaultEntry
-from .validators import Base64Bytes
+from .validators import Base64Bytes, MAX_ENTRY_CIPHERTEXT_BYTES
 
 
 class StrictFields:
@@ -38,43 +38,83 @@ class StrictInteger(serializers.IntegerField):
         return super().to_internal_value(data)
 
 
+class RecoveryEnvelopeSerializer(StrictFields, serializers.Serializer):
+    nonce = EncodedBytes(12, 12)
+    wrapped_key = EncodedBytes(48, 48)
+
+
 class VaultSerializer(StrictFields, serializers.ModelSerializer):
     id = CanonicalUUID()
     kdf_salt = EncodedBytes(16, 16)
     wrap_nonce = EncodedBytes(12, 12)
     wrapped_key = EncodedBytes(48, 48)
+    recovery = serializers.SerializerMethodField()
+
+    def get_recovery(self, vault):
+        if vault.recovery_nonce is None:
+            return None
+        return {"nonce": vault.recovery_nonce, "wrapped_key": vault.recovery_wrapped_key}
 
     class Meta:
         model = Vault
         fields = ["id", "format_version", "cipher", "kdf", "kdf_version", "kdf_memory_kib",
                   "kdf_iterations", "kdf_parallelism", "kdf_salt", "wrap_nonce", "wrapped_key",
-                  "created_at", "updated_at"]
-        read_only_fields = ["created_at", "updated_at"]
+                  "key_version", "recovery", "created_at", "updated_at"]
+        read_only_fields = ["key_version", "created_at", "updated_at"]
 
 
 class EntryCreateSerializer(StrictFields, serializers.Serializer):
     id = CanonicalUUID()
     nonce = EncodedBytes(12, 12)
-    ciphertext = EncodedBytes(17, 65552)
+    ciphertext = EncodedBytes(17, MAX_ENTRY_CIPHERTEXT_BYTES)
 
 
-class MasterPasswordSerializer(StrictFields, serializers.Serializer):
+class KeyVersionSerializer(StrictFields, serializers.Serializer):
+    # Legacy clients can write only before the first rotation.
+    expected_key_version = StrictInteger(min_value=1, max_value=2147483647, default=1)
+
+
+class EntryWriteSerializer(EntryCreateSerializer, KeyVersionSerializer):
+    pass
+
+
+class ExpectedWrapperSerializer(StrictFields, serializers.Serializer):
     expected_kdf_salt = EncodedBytes(16, 16)
     expected_wrap_nonce = EncodedBytes(12, 12)
     expected_wrapped_key = EncodedBytes(48, 48)
+
+
+class MasterPasswordSerializer(ExpectedWrapperSerializer):
     kdf_salt = EncodedBytes(16, 16)
     wrap_nonce = EncodedBytes(12, 12)
     wrapped_key = EncodedBytes(48, 48)
 
 
-class EntryUpdateSerializer(StrictFields, serializers.Serializer):
+class RecoverySetupSerializer(ExpectedWrapperSerializer):
+    expected_key_version = StrictInteger(min_value=1, max_value=2147483647)
+    expected_recovery = RecoveryEnvelopeSerializer(allow_null=True)
+    recovery = RecoveryEnvelopeSerializer(allow_null=True)
+
+
+class RecoverVaultSerializer(MasterPasswordSerializer):
+    expected_key_version = StrictInteger(min_value=1, max_value=2147483647)
+    expected_recovery = RecoveryEnvelopeSerializer()
+
+
+class KeyRotationSerializer(MasterPasswordSerializer):
+    expected_key_version = StrictInteger(min_value=1, max_value=2147483646)
+    expected_entries_version = CanonicalUUID()
+    entries = EntryCreateSerializer(many=True, max_length=5000)
+
+
+class EntryUpdateSerializer(KeyVersionSerializer):
     expected_revision = StrictInteger(min_value=1, max_value=2147483646)
     expected_state_version = StrictInteger(min_value=1, max_value=2147483647)
     nonce = EncodedBytes(12, 12)
-    ciphertext = EncodedBytes(17, 65552)
+    ciphertext = EncodedBytes(17, MAX_ENTRY_CIPHERTEXT_BYTES)
 
 
-class EntryDeleteSerializer(StrictFields, serializers.Serializer):
+class EntryDeleteSerializer(KeyVersionSerializer):
     expected_revision = StrictInteger(min_value=1, max_value=2147483647)
     expected_state_version = StrictInteger(min_value=1, max_value=2147483647)
 
@@ -99,7 +139,7 @@ class SettingsSerializer(StrictFields, serializers.ModelSerializer):
         return value
 
 
-class RestoreSerializer(StrictFields, serializers.Serializer):
+class RestoreSerializer(KeyVersionSerializer):
     backup_id = CanonicalUUID()
     archive_digest = serializers.RegexField(r"^[0-9a-f]{64}$", max_length=64, trim_whitespace=False)
     entries = EntryCreateSerializer(many=True, allow_empty=False, max_length=5000)

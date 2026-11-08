@@ -1,8 +1,9 @@
 import { ApiError, accountError } from '../api.ts'
-import { createEncryptedVault, decryptEntry, encryptEntry, rewrapEncryptedVault, unlockEncryptedVault } from './crypto.ts'
+import { createEncryptedVault, createRecoveryKey, decryptEntry, encryptEntry, prepareKeyRotation, rewrapEncryptedVault,
+  rewrapWithRecovery, unlockEncryptedVault } from './crypto.ts'
 import type { DeriveKey } from './crypto.ts'
 import { DEFAULT_PREFERENCES, validatePayload, VaultDataError } from './format.ts'
-import type { EntryPayload, SecurityPreferences, UnlockedEntry, VaultMetadata } from './format.ts'
+import type { EncryptedEntry, EntryPayload, RecoveryEnvelope, SecurityPreferences, UnlockedEntry, VaultMetadata } from './format.ts'
 import type { VaultApi } from './api.ts'
 import { BackupError, createBackup, openBackup } from './backup.ts'
 import type { OpenedBackup } from './backup.ts'
@@ -12,11 +13,13 @@ type Snapshot = { ownerId: number | null; loaded: boolean; busy: boolean; unlock
   vaults: VaultMetadata[]; selectedId: string | null; entries: UnlockedEntry[]; trash: UnlockedEntry[]; preferences: SecurityPreferences; lockEpoch: number;
   backupExport: { text: string; fileName: string } | null;
   backupPreview: { exportedAt: string; count: number; titles: string[]; alreadyRestored: boolean } | null;
-  backupResult: string; masterPasswordResult: string; entriesVersion: string | null }
+  backupResult: string; masterPasswordResult: string; keyRotationResult: string; recoveryResult: string;
+  recoveryCode: string | null; entriesVersion: string | null }
 type Operation = { signal: AbortSignal }
 const initial = (): Snapshot => ({ ownerId: null, loaded: false, busy: false, unlocked: false, error: '',
   vaults: [], selectedId: null, entries: [], trash: [], preferences: { ...DEFAULT_PREFERENCES }, lockEpoch: 0,
-  backupExport: null, backupPreview: null, backupResult: '', masterPasswordResult: '', entriesVersion: null })
+  backupExport: null, backupPreview: null, backupResult: '', masterPasswordResult: '', keyRotationResult: '',
+  recoveryCode: null, recoveryResult: '', entriesVersion: null })
 
 export class VaultController {
   #state: Snapshot = initial()
@@ -31,11 +34,14 @@ export class VaultController {
   #clock: () => number
   #backupDraft: OpenedBackup | null = null
   #backupWork = false
+  #recoveryDraft: { previous: VaultMetadata; recovery: RecoveryEnvelope } | null = null
+  #recoveryWork = false
 
   constructor(api: VaultApi, derive: DeriveKey, clock = Date.now) { this.#api = api; this.#derive = derive; this.#clock = clock }
   getSnapshot = () => this.#state
   subscribe = (listener: () => void) => { this.#listeners.add(listener); return () => { this.#listeners.delete(listener) } }
   #publish(patch: Partial<Snapshot>) { this.#state = { ...this.#state, ...patch }; this.#listeners.forEach((listener) => listener()) }
+  #selectedVault() { return this.#state.vaults.find((vault) => vault.id === this.#state.selectedId) }
 
   lock = () => {
     this.#epoch += 1
@@ -45,8 +51,11 @@ export class VaultController {
     this.#key = null
     this.#backupDraft = null
     this.#backupWork = false
+    this.#recoveryDraft = null
+    this.#recoveryWork = false
     this.#publish({ entries: [], trash: [], unlocked: false, busy: false, error: '', lockEpoch: this.#state.lockEpoch + 1,
-      backupExport: null, backupPreview: null, backupResult: '', masterPasswordResult: '', entriesVersion: null })
+      backupExport: null, backupPreview: null, backupResult: '', masterPasswordResult: '', keyRotationResult: '',
+      recoveryCode: null, recoveryResult: '', entriesVersion: null })
   }
 
   switchAccount(ownerId: number | null, enabled: boolean) {
@@ -56,14 +65,15 @@ export class VaultController {
     if (ownerId !== null && enabled) void this.load()
   }
 
-  async #run(action: (op: Operation) => Promise<{ patch: Partial<Snapshot>; key?: CryptoKey; backupDraft?: OpenedBackup | null; lock?: boolean }>, backupWork = false): Promise<boolean> {
+  async #run(action: (op: Operation) => Promise<{ patch: Partial<Snapshot>; key?: CryptoKey; backupDraft?: OpenedBackup | null; lock?: boolean }>, work?: 'backup' | 'recovery'): Promise<boolean> {
     if (this.#state.busy || this.#state.ownerId === null) return false
     this.#syncAbort?.abort()
     this.#syncAbort = null
     const epoch = ++this.#epoch
     const abort = new AbortController()
     this.#abort = abort
-    this.#backupWork = backupWork
+    this.#backupWork = work === 'backup'
+    this.#recoveryWork = work === 'recovery'
     this.#publish({ busy: true, error: '' })
     try {
       const result = await action({ signal: abort.signal })
@@ -75,11 +85,12 @@ export class VaultController {
       return true
     } catch (error) {
       if (epoch !== this.#epoch || abort.signal.aborted) return false
-      if (!(error instanceof BackupError) && (error instanceof VaultDataError || !(error instanceof ApiError) || [401, 403].includes(error.status))) this.lock()
+      if (!(error instanceof BackupError) && (error instanceof VaultDataError || !(error instanceof ApiError) ||
+          [401, 403].includes(error.status) || error.code === 'vault_key_changed')) this.lock()
       this.#publish({ busy: false, error: error instanceof VaultDataError || error instanceof BackupError ? error.message : accountError(error) })
       return false
     } finally {
-      if (epoch === this.#epoch) this.#backupWork = false
+      if (epoch === this.#epoch) { this.#backupWork = false; this.#recoveryWork = false }
     }
   }
 
@@ -109,9 +120,14 @@ export class VaultController {
     return { key, patch: { vaults: [...previous, saved], selectedId: saved.id, unlocked: true, entries: [], trash: [], loaded: true } }
   })
 
-  async #readEntries(key: CryptoKey, id: string, signal: AbortSignal) {
+  async #readEnvelopes(id: string, signal: AbortSignal, keyVersion: number): Promise<{ envelopes: EncryptedEntry[]; entriesVersion: string | null }> {
     let entriesVersion: string | null = null
-    const envelopes = await this.#api.entries(id, signal, (version) => { entriesVersion = version })
+    const envelopes = await this.#api.entries(id, signal, (version) => { entriesVersion = version }, keyVersion)
+    return { envelopes, entriesVersion }
+  }
+
+  async #readEntries(key: CryptoKey, id: string, signal: AbortSignal, keyVersion = this.#selectedVault()?.key_version ?? 1) {
+    const { envelopes, entriesVersion } = await this.#readEnvelopes(id, signal, keyVersion)
     const entries: UnlockedEntry[] = []
     for (const envelope of envelopes) {
       signal.throwIfAborted()
@@ -130,8 +146,8 @@ export class VaultController {
     const metadata = vaults.find((vault) => vault.id === selectedId)
     if (!metadata) throw new VaultDataError('Load and select your vault first.')
     const key = await unlockEncryptedVault(metadata, master, this.#derive, signal)
-    const snapshot = await this.#readEntries(key, metadata.id, signal)
-    return { key, patch: { ...snapshot, vaults, unlocked: true, masterPasswordResult: '' } }
+    const snapshot = await this.#readEntries(key, metadata.id, signal, metadata.key_version ?? 1)
+    return { key, patch: { ...snapshot, vaults, unlocked: true, masterPasswordResult: '', keyRotationResult: '', recoveryResult: '' } }
   })
 
   refresh = () => this.#run(async ({ signal }) => {
@@ -148,7 +164,7 @@ export class VaultController {
     const { signal } = controller
     const current = () => this.#syncAbort === controller && !signal.aborted
     try {
-      const remote = await this.#api.entriesVersion(selectedId, signal)
+      const remote = await this.#api.entriesVersion(selectedId, signal, this.#selectedVault()?.key_version ?? 1)
       if (!current() || remote === entriesVersion) return
       const snapshot = await this.#readEntries(key, selectedId, signal)
       if (current()) this.#publish(snapshot)
@@ -175,7 +191,8 @@ export class VaultController {
     const revision = existing ? existing.envelope.revision + 1 : 1
     const encrypted = await encryptEntry(this.#key, this.#state.selectedId, id, revision, data)
     signal.throwIfAborted()
-    const envelope = await this.#api.save(this.#state.selectedId, id, revision, encrypted, signal, existing?.envelope.state_version)
+    const envelope = await this.#api.save(this.#state.selectedId, id, revision, encrypted, signal,
+      existing?.envelope.state_version, this.#selectedVault()?.key_version)
     return { patch: { entries: [{ envelope, data }, ...this.#state.entries.filter((entry) => entry.envelope.id !== id)] } }
   })
 
@@ -185,7 +202,7 @@ export class VaultController {
     if (!entry) throw new ApiError('This entry is no longer active.', 409)
     if (expectedRevision !== entry.envelope.revision) throw new ApiError('Entry changed. Close the editor and refresh before deleting.', 409)
     if (expectedStateVersion !== entry.envelope.state_version) throw new ApiError('Entry state changed. Close the editor and refresh before moving it to Trash.', 409)
-    const envelope = await this.#api.remove(entry.envelope, signal)
+    const envelope = await this.#api.remove(entry.envelope, signal, this.#selectedVault()?.key_version)
     return { patch: { entries: this.#state.entries.filter((item) => item.envelope.id !== id),
       trash: [{ envelope, data: entry.data }, ...this.#state.trash], backupExport: null } }
   })
@@ -194,7 +211,7 @@ export class VaultController {
     const entry = this.#state.trash.find((item) => item.envelope.id === id)
     if (!this.#key || !entry) throw new VaultDataError('Unlock and refresh before restoring.')
     if (expectedRevision !== entry.envelope.revision || expectedStateVersion !== entry.envelope.state_version) throw new ApiError('Entry changed. Refresh Trash before restoring.', 409)
-    const envelope = await this.#api.restoreEntry(entry.envelope, signal)
+    const envelope = await this.#api.restoreEntry(entry.envelope, signal, this.#selectedVault()?.key_version)
     return { patch: { entries: [{ envelope, data: entry.data }, ...this.#state.entries],
       trash: this.#state.trash.filter((item) => item.envelope.id !== id), backupExport: null } }
   })
@@ -203,14 +220,14 @@ export class VaultController {
     const entry = this.#state.trash.find((item) => item.envelope.id === id)
     if (!this.#key || !entry) throw new VaultDataError('Unlock and refresh before permanently deleting.')
     if (expectedRevision !== entry.envelope.revision || expectedStateVersion !== entry.envelope.state_version) throw new ApiError('Entry changed. Refresh Trash before permanently deleting.', 409)
-    await this.#api.purge(entry.envelope, signal)
+    await this.#api.purge(entry.envelope, signal, this.#selectedVault()?.key_version)
     return { patch: { trash: this.#state.trash.filter((item) => item.envelope.id !== id), backupExport: null } }
   })
 
   updatePreferences = (value: SecurityPreferences) => this.#run(async ({ signal }) => ({ patch: { preferences: await this.#api.updatePreferences(value, signal) } }))
 
   changeMasterPassword = (currentMaster: string, newMaster: string) => this.#run(async ({ signal }) => {
-    const previous = this.#state.vaults.find((vault) => vault.id === this.#state.selectedId)
+    const previous = this.#selectedVault()
     if (!this.#key || !this.#state.unlocked || !previous) throw new VaultDataError('Unlock your vault before changing its master password.')
     const vaults = this.#state.vaults
     const { vault, key } = await rewrapEncryptedVault(previous, currentMaster, newMaster, this.#derive, signal)
@@ -232,6 +249,122 @@ export class VaultController {
     }
     return { lock: true, patch: { loaded: true, vaults: vaults.map((item) => item.id === saved.id ? saved : item),
       masterPasswordResult: 'Master password changed. Unlock your vault with the new password.' } }
+  })
+
+  rotateKey = (currentMaster: string, newMaster: string) => this.#run(async ({ signal }) => {
+    const previous = this.#selectedVault()
+    if (!this.#key || !this.#state.unlocked || !previous) throw new VaultDataError('Unlock your vault before rotating its encryption key.')
+    const vaults = this.#state.vaults
+    const { envelopes, entriesVersion } = await this.#readEnvelopes(previous.id, signal, previous.key_version ?? 1)
+    if (!entriesVersion) throw new VaultDataError('A current vault snapshot is required to rotate its encryption key.')
+    const { vault, entries } = await prepareKeyRotation(previous, envelopes, currentMaster, newMaster, this.#derive, signal)
+    signal.throwIfAborted()
+    // A cancellation or lost response after dispatch cannot safely reuse the old wrapper.
+    this.#publish({ loaded: false, vaults: [] })
+    let saved: VaultMetadata
+    try { saved = await this.#api.rotateKey(previous, vault, entriesVersion, entries, signal) }
+    catch (error) {
+      if (!signal.aborted) {
+        this.lock()
+        this.#publish({ error: error instanceof ApiError && error.status === 409
+          ? 'The vault changed during rotation. Reload the vault list and unlock before trying again.'
+          : 'Rotation could not be confirmed. Reload the vault list and try the new master password first. If it does not work, try the previous one.' })
+      }
+      return { patch: {} }
+    }
+    return { lock: true, patch: { loaded: true, vaults: vaults.map((item) => item.id === saved.id ? saved : item),
+      keyRotationResult: 'Vault encryption key rotated. Unlock your vault with the new master password.' } }
+  })
+
+  async #currentVault(signal: AbortSignal) {
+    const selected = this.#selectedVault()
+    if (!selected || !this.#state.loaded) throw new VaultDataError('Load and select your vault first.')
+    const vaults = await this.#api.vaults(signal)
+    signal.throwIfAborted()
+    const previous = vaults.find((vault) => vault.id === selected.id)
+    if (!previous) throw new VaultDataError('This vault is no longer available.')
+    if (this.#state.unlocked && previous.key_version !== selected.key_version) {
+      throw new VaultDataError('The vault encryption key changed. Unlock the vault again.')
+    }
+    return { previous, vaults }
+  }
+
+  prepareRecovery = (master: string) => this.#run(async ({ signal }) => {
+    if (!this.#key || !this.#state.unlocked) throw new VaultDataError('Unlock the vault before setting up a recovery key.')
+    this.#recoveryDraft = null
+    this.#publish({ recoveryCode: null, recoveryResult: '' })
+    const { previous, vaults } = await this.#currentVault(signal)
+    const { code, recovery } = await createRecoveryKey(previous, master, this.#derive, signal)
+    signal.throwIfAborted()
+    this.#recoveryDraft = { previous, recovery }
+    return { patch: { vaults, recoveryCode: code } }
+  }, 'recovery')
+
+  cancelRecoveryDraft = () => {
+    this.#recoveryDraft = null
+    if (this.#recoveryWork) {
+      this.#epoch += 1
+      this.#abort?.abort()
+      this.#recoveryWork = false
+      this.#publish({ busy: false, recoveryCode: null })
+    } else if (this.#state.recoveryCode !== null) this.#publish({ recoveryCode: null })
+  }
+
+  async #saveRecovery(previous: VaultMetadata, recovery: RecoveryEnvelope | null, signal: AbortSignal) {
+    try { return await this.#api.setupRecovery(previous, recovery, signal) }
+    catch (error) {
+      if (!signal.aborted) {
+        this.lock()
+        this.#publish({ loaded: false, vaults: [], error: error instanceof ApiError && error.status === 409
+          ? 'Vault recovery settings changed. Reload the vault list before trying again.'
+          : 'The recovery change could not be confirmed. Reload the vault list to check which key is active.' })
+      }
+      return null
+    }
+  }
+
+  confirmRecovery = () => this.#run(async ({ signal }) => {
+    const draft = this.#recoveryDraft
+    if (!this.#key || !draft || draft.previous.id !== this.#state.selectedId) throw new VaultDataError('Generate and save a recovery key first.')
+    this.#recoveryDraft = null
+    this.#publish({ recoveryCode: null })
+    const saved = await this.#saveRecovery(draft.previous, draft.recovery, signal)
+    return { patch: saved ? { vaults: this.#state.vaults.map((item) => item.id === saved.id ? saved : item),
+      recoveryResult: 'Your new recovery key is active.' } : {} }
+  })
+
+  disableRecovery = (master: string) => this.#run(async ({ signal }) => {
+    if (!this.#key || !this.#state.unlocked) throw new VaultDataError('Unlock the vault before disabling its recovery key.')
+    const { previous, vaults } = await this.#currentVault(signal)
+    if (!previous.recovery) return { patch: { vaults, recoveryResult: 'No recovery key is active.' } }
+    await unlockEncryptedVault(previous, master, this.#derive, signal)
+    signal.throwIfAborted()
+    const saved = await this.#saveRecovery(previous, null, signal)
+    return { patch: saved ? { vaults: vaults.map((item) => item.id === saved.id ? saved : item),
+      recoveryResult: 'Vault recovery key disabled.' } : {} }
+  })
+
+  recoverWithKey = (code: string, newMaster: string) => this.#run(async ({ signal }) => {
+    if (this.#state.unlocked) throw new VaultDataError('Lock the vault before using a recovery key.')
+    const { previous, vaults } = await this.#currentVault(signal)
+    const { vault, key } = await rewrapWithRecovery(previous, code, newMaster, this.#derive, signal)
+    // Check both active and trashed ciphertext before committing the new master wrapper.
+    await this.#readEntries(key, previous.id, signal, previous.key_version ?? 1)
+    signal.throwIfAborted()
+    this.#publish({ loaded: false, vaults: [] })
+    let saved: VaultMetadata
+    try { saved = await this.#api.recoverVault(previous, vault, signal) }
+    catch (error) {
+      if (!signal.aborted) {
+        this.lock()
+        this.#publish({ error: error instanceof ApiError && error.status === 409
+          ? 'Vault recovery settings changed. Reload the vault list before trying again.'
+          : 'Recovery could not be confirmed. Reload the vault list and try the new master password first.' })
+      }
+      return { patch: {} }
+    }
+    return { lock: true, patch: { loaded: true, vaults: vaults.map((item) => item.id === saved.id ? saved : item),
+      recoveryResult: 'Master password reset. Unlock with the new password, then set up a new recovery key.' } }
   })
 
   clearBackupPreview = () => {
@@ -257,7 +390,7 @@ export class VaultController {
     const snapshot = await this.#readEntries(this.#key, this.#state.selectedId, signal)
     const text = await createBackup(this.#state.selectedId, snapshot.entries, password, this.#derive, signal)
     return { patch: { ...snapshot, backupExport: { text, fileName: `nexora-safevault-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json` } } }
-  }, true)
+  }, 'backup')
 
   prepareRestore = (text: string, password: string) => this.#run(async ({ signal }) => {
     if (!this.#key || !this.#state.unlocked || !this.#state.selectedId) throw new BackupError('Unlock the destination vault before restoring.')
@@ -268,7 +401,7 @@ export class VaultController {
     if (receipt && (receipt.archive_digest !== draft.archiveDigest || receipt.entry_count !== draft.content.entries.length)) throw new BackupError('Backup identity conflicts with an earlier restore.')
     return { backupDraft: draft, patch: { backupPreview: { exportedAt: draft.content.exported_at, count: draft.content.entries.length,
       titles: draft.content.entries.slice(0, 10).map((entry) => entry.payload.title), alreadyRestored: Boolean(receipt) } } }
-  }, true)
+  }, 'backup')
 
   restoreBackup = () => this.#run(async ({ signal }) => {
     const draft = this.#backupDraft
@@ -290,17 +423,18 @@ export class VaultController {
         entries.push({ id, ...encrypted })
       }
       signal.throwIfAborted()
-      repeated = (await this.#api.restore(vaultId, draft.backupId, draft.archiveDigest, entries, signal)).already_restored
+      repeated = (await this.#api.restore(vaultId, draft.backupId, draft.archiveDigest, entries, signal,
+        this.#selectedVault()?.key_version)).already_restored
     }
     const snapshot = await this.#readEntries(key, vaultId, signal)
     return { backupDraft: null, patch: { ...snapshot, backupPreview: null,
       backupResult: repeated ? 'This backup was already restored. No duplicate entries were added.' : `Restored ${draft.content.entries.length} entries. Existing entries were preserved.` } }
-  }, true)
+  }, 'backup')
 
   checkIdle = () => {
     const elapsed = this.#clock() - this.#lastActivity
     if (this.#state.unlocked && (elapsed < 0 || elapsed >= this.#state.preferences.auto_lock_seconds * 1000)) this.lock()
   }
   touch = () => { this.checkIdle(); if (this.#state.unlocked) this.#lastActivity = this.#clock() }
-  hidden = () => { if (this.#state.preferences.lock_on_hidden) this.lock() }
+  hidden = () => { if (this.#state.preferences.lock_on_hidden) this.lock(); else this.cancelRecoveryDraft() }
 }

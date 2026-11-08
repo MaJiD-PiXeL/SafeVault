@@ -1,6 +1,6 @@
 import { createEncryptedVault, unlockEncryptedVault } from './crypto.ts'
 import type { DeriveKey } from './crypto.ts'
-import { fromBase64, object, PROFILE, toBase64, UUID, validatePayload, validateVault } from './format.ts'
+import { decodeEntryPayload, encodeEntryPayload, fromBase64, object, PROFILE, toBase64, UUID, validateVault } from './format.ts'
 import type { EntryPayload, UnlockedEntry, VaultMetadata } from './format.ts'
 
 export const MAX_BACKUP_FILE_BYTES = 48 * 1024 * 1024
@@ -34,8 +34,7 @@ function validateContent(value: unknown): BackupContent {
         !Number.isSafeInteger(record.original_revision) || (record.original_revision as number) < 1 ||
         (record.original_revision as number) > 2147483647 || !date(record.created_at) || !date(record.updated_at)) throw new BackupError()
     seen.add(record.original_id)
-    const payload = validatePayload(record.payload)
-    if (new TextEncoder().encode(JSON.stringify(payload)).length > 65536) throw new BackupError()
+    const payload = decodeEntryPayload(record.payload)
     return { original_id: record.original_id, original_revision: record.original_revision as number,
       created_at: record.created_at, updated_at: record.updated_at, payload }
   })
@@ -48,9 +47,10 @@ export async function createBackup(sourceVaultId: string, entries: UnlockedEntry
   try {
     signal.throwIfAborted()
     if (password.length < 12 || password.length > 1024) throw new BackupError('Use a backup password of 12–1,024 characters.')
-    const content = validateContent({ version: 1, exported_at: new Date().toISOString(), source_vault_id: sourceVaultId,
+    const content = { version: 1, exported_at: new Date().toISOString(), source_vault_id: sourceVaultId,
       entries: entries.map(({ envelope, data }) => ({ original_id: envelope.id, original_revision: envelope.revision,
-        created_at: envelope.created_at, updated_at: envelope.updated_at, payload: data })) })
+        created_at: envelope.created_at, updated_at: envelope.updated_at, payload: encodeEntryPayload(data) })) }
+    validateContent(content)
     bytes = new TextEncoder().encode(JSON.stringify(content))
     if (bytes.length > MAX_CONTENT_BYTES) throw new BackupError('This backup exceeds the 32 MiB content limit.')
     // Independent salt AND random data key per archive. No nonce/key reuse with live entries.

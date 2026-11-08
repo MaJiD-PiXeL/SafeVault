@@ -5,6 +5,7 @@ import type { BackupContent } from './backup'
 import { deriveInWorker } from './derive'
 import { ENTRY_LABELS, entryKind, entrySummary } from './format'
 import type { EntryPayload } from './format'
+import AttachmentList from './AttachmentList'
 
 const IDLE_LIMIT_MS = 5 * 60 * 1000
 const PAGE_SIZE = 25
@@ -26,6 +27,7 @@ function EntryDetails({ data }: { data: EntryPayload }) {
       <button type="button" onClick={() => setRevealed(!revealed)} className="text-blue-300 underline">{revealed ? 'Hide card number' : 'Show card number'}</button>
     </>}
     {data.notes && <p className="whitespace-pre-wrap break-words">{data.notes}</p>}
+    <AttachmentList files={data.attachments ?? []} />
   </div>
 }
 

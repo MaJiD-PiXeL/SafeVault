@@ -3,16 +3,49 @@ import type { FormEvent } from 'react'
 import { LockKeyhole } from 'lucide-react'
 import type { VaultController } from './controller'
 
+function RecoveryForm({ controller }: { controller: VaultController }) {
+  const [key, setKey] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmation, setConfirmation] = useState('')
+  const [error, setError] = useState('')
+  const { busy } = controller.getSnapshot()
+  const inputClass = 'mt-2 block w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm outline-none focus:border-blue-400'
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (busy) return
+    if (password !== confirmation) { setError('Master passwords do not match.'); return }
+    const code = key
+    const next = password
+    setKey(''); setPassword(''); setConfirmation(''); setError('')
+    await controller.recoverWithKey(code, next)
+  }
+
+  return <form className="mt-6 max-w-md space-y-5" onSubmit={(event) => void submit(event)}>
+    <p className="text-sm leading-6 text-slate-400">Set a new master password using your saved recovery key. After you use this key, set up a new one in Security Center.</p>
+    {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
+    <fieldset disabled={busy} className="space-y-5 disabled:opacity-50">
+      <label className="block text-xs text-slate-300">Vault recovery key<input required type="password" autoComplete="off" spellCheck={false} maxLength={64} value={key} onChange={(event) => setKey(event.target.value)} className={inputClass} /></label>
+      <label className="block text-xs text-slate-300">New master password<input required type="password" autoComplete="new-password" minLength={12} maxLength={1024} value={password} onChange={(event) => setPassword(event.target.value)} className={inputClass} /></label>
+      <label className="block text-xs text-slate-300">Confirm new master password<input required type="password" autoComplete="new-password" minLength={12} maxLength={1024} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} className={inputClass} /></label>
+      <button className="w-full rounded-xl brand-primary px-5 py-3 text-sm font-semibold">{busy ? 'Recovering vault...' : 'Reset master password'}</button>
+    </fieldset>
+  </form>
+}
+
 export default function VaultAccess({ controller }: { controller: VaultController }) {
   const state = controller.getSnapshot()
   const [master, setMaster] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [localError, setLocalError] = useState('')
   const [another, setAnother] = useState(false)
+  const [recovering, setRecovering] = useState(false)
   const creating = state.loaded && (state.vaults.length === 0 || another)
+  const hasRecovery = Boolean(state.vaults.find((vault) => vault.id === state.selectedId)?.recovery)
 
   function changeMode() {
     setAnother(!another)
+    setRecovering(false)
     setMaster('')
     setConfirmation('')
     setLocalError('')
@@ -35,18 +68,20 @@ export default function VaultAccess({ controller }: { controller: VaultControlle
     <h2 id="unlock-heading" className="mt-5 text-xl font-semibold">{creating ? 'Create your encrypted vault' : 'Your vault is locked'}</h2>
     <p className="mt-3 text-sm leading-7 text-slate-400">Your master password stays on this device. It unlocks your vault separately from your NEXORA account.</p>
     {(localError || state.error) && <p role="alert" className="mt-4 text-sm text-red-300">{localError || state.error}</p>}
+    {state.recoveryResult && <p role="status" className="mt-4 text-sm text-blue-300">{state.recoveryResult}</p>}
     {!state.loaded ? <button disabled={state.busy} onClick={() => void controller.load()} className="mt-6 rounded-xl brand-primary px-5 py-3 text-sm disabled:opacity-50">{state.busy ? 'Loading vault...' : 'Load vault'}</button> : <>
       {!creating && state.vaults.length > 1 && <label className="mt-5 block text-sm text-slate-300">Vault<select aria-label="Select vault" value={state.selectedId ?? ''} disabled={state.busy} onChange={(event) => controller.select(event.target.value)} className="mt-2 block w-full rounded-lg bg-vault-raised p-3">{state.vaults.map((vault, index) => <option key={vault.id} value={vault.id}>Personal vault {index + 1}</option>)}</select></label>}
       {another && <p className="mt-4 text-sm text-slate-400">Create a separate vault with a new master password. To recover saved entries, open Backups in the new vault and restore your encrypted archive.</p>}
-      <form className="mt-6 max-w-md space-y-5" onSubmit={(event) => void submit(event)}>
+      {recovering && !creating && hasRecovery ? <RecoveryForm key={state.selectedId} controller={controller} /> : <form className="mt-6 max-w-md space-y-5" onSubmit={(event) => void submit(event)}>
         <label className="block text-xs text-slate-300">Master password
           <input required type="password" autoComplete="off" spellCheck={false} minLength={creating ? 12 : 1} maxLength={1024} value={master} disabled={state.busy} onChange={(event) => setMaster(event.target.value)} className="mt-2 block w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm outline-none focus:border-blue-400" />
         </label>
         {creating && <label className="block text-xs text-slate-300">Confirm master password<input required type="password" autoComplete="off" maxLength={1024} value={confirmation} disabled={state.busy} onChange={(event) => setConfirmation(event.target.value)} className="mt-2 block w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm outline-none focus:border-blue-400" /></label>}
         {creating && <p className="text-xs leading-6 text-slate-400">Use a unique passphrase of at least 12 characters, different from your account password. Keep it safe: account recovery cannot recover your vault key.</p>}
         <button disabled={state.busy} className="w-full rounded-xl brand-primary px-5 py-3 text-sm font-semibold disabled:opacity-50">{state.busy ? 'Deriving your key...' : creating ? 'Create encrypted vault' : 'Unlock vault'}</button>
-      </form>
+      </form>}
       <button disabled={state.busy} onClick={() => void controller.load()} className="mt-5 text-xs text-slate-400 underline">Refresh vault list</button>
+      {!creating && hasRecovery && <button type="button" disabled={state.busy} onClick={() => { setRecovering(!recovering); setMaster(''); setLocalError('') }} className="ml-4 mt-5 text-xs text-blue-300 underline">{recovering ? 'Return to vault unlock' : 'Use a recovery key'}</button>}
       {state.vaults.length > 0 && state.vaults.length < 10 && <button type="button" disabled={state.busy} onClick={changeMode} className="ml-4 mt-5 text-xs text-blue-300 underline">
         {another ? 'Return to vault unlock' : 'Create another vault'}
       </button>}
