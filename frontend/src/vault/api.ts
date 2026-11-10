@@ -37,8 +37,8 @@ function expectedWrapper(old: VaultMetadata) {
   return { expected_kdf_salt: old.kdf_salt, expected_wrap_nonce: old.wrap_nonce, expected_wrapped_key: old.wrapped_key }
 }
 
-function sameWrapper(left: VaultMetadata, right: VaultMetadata) {
-  return left.id === right.id && left.key_version === right.key_version && left.kdf_salt === right.kdf_salt &&
+export function sameWrapper(left: VaultMetadata, right: VaultMetadata) {
+  return left.id === right.id && (left.key_version ?? 1) === (right.key_version ?? 1) && left.kdf_salt === right.kdf_salt &&
     left.wrap_nonce === right.wrap_nonce && left.wrapped_key === right.wrapped_key
 }
 
@@ -149,6 +149,14 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
         // Construct our own same-origin page path; never follow response URLs.
       }
       throw new VaultDataError('This vault is too large for this client.')
+    },
+    async entry(vaultId: string, id: string, signal: AbortSignal) {
+      if (!UUID.test(id)) throw new VaultDataError()
+      try {
+        const result = validateEnvelope(await request(`${vaultPath(vaultId)}/${id}`, 'GET', undefined, signal), vaultId)
+        if (result.id !== id) throw new VaultDataError()
+        return result
+      } catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error }
     },
     async save(vaultId: string, id: string, revision: number, encrypted: { nonce: string; ciphertext: string }, signal: AbortSignal, stateVersion = 1, keyVersion?: number) {
       if (!UUID.test(id)) throw new VaultDataError()

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { accountApi } from './api'
+import { accountApi, ApiError } from './api'
 import type { AccountUser } from './api'
 
 export function useAccount() {
@@ -21,8 +21,13 @@ export function useAccount() {
         setUser(session.user)
         setStatus('ready')
       }
-    } catch {
-      if (attempt === sequence.current && !signal?.aborted) setStatus('offline')
+    } catch (error) {
+      if (attempt === sequence.current && !signal?.aborted) {
+        if (error instanceof ApiError && [401, 403].includes(error.status)) {
+          setUser(null)
+          setStatus('ready')
+        } else setStatus('offline')
+      }
     }
   }, [])
 
@@ -31,12 +36,14 @@ export function useAccount() {
     const check = () => { if (!document.hidden) void refresh(controller.signal) }
     check()
     window.addEventListener('focus', check)
+    window.addEventListener('online', check)
     document.addEventListener('visibilitychange', check)
     const interval = window.setInterval(check, 60000)
     return () => {
       controller.abort()
       sequence.current += 1
       window.removeEventListener('focus', check)
+      window.removeEventListener('online', check)
       document.removeEventListener('visibilitychange', check)
       window.clearInterval(interval)
     }

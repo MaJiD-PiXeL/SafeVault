@@ -160,10 +160,10 @@ and blocks writes from older key versions. See [the rotation protocol](key-rotat
 [Vault recovery](vault-recovery.md) is opt-in and uses a recovery key saved by
 the user. A successful recovery replaces the master password and consumes the key.
 
-Independent audit, rollback detection,
-offline editing, large-vault streaming and
-production hardening remain future work. No legacy data
-migration or scheduled cleanup/sync is introduced. Use synthetic test entries.
+[Offline editing](offline-edits.md) queues encrypted drafts in the browser when
+an unlocked vault loses connectivity and preserves them when server versions
+conflict. Independent audit, rollback detection, large-vault streaming and
+production hardening remain future work. Use synthetic test entries.
 
 References: [hash-wasm API](https://github.com/Daninet/hash-wasm),
 [RFC 9106](https://www.rfc-editor.org/rfc/rfc9106.html),

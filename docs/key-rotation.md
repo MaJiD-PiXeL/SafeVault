@@ -46,7 +46,9 @@ changes and backup restores compare `expected_key_version` inside the vault lock
 Omitting it is treated as version 1 for compatibility, so older clients cannot
 write to a rotated vault. Current clients lock when they detect a key change
 through sync or a rejected write, including when the vault is empty. A device
-that is offline may retain previously unlocked data until it locks or reconnects.
+that is offline can reopen its last synced entries in the same tab with the
+previous master password until it reconnects. Reconnecting invalidates that
+copy when the key version has changed. [Offline editing guide](offline-edits.md)
 
 Apply the migration and deploy the new frontend and backend together. Stop old
 API workers before allowing rotation, and keep the key version checks in any

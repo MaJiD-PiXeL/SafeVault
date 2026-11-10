@@ -14,9 +14,10 @@ permanent deletion frees the entry's storage.
 
 All entry fields stay encrypted under the same vault key. Unlock authenticates
 and decrypts active and trashed entries before publishing either set. A corrupt
-record fails the whole load. The controller clears both sets on lock/account
-change; the Trash view discards its search and confirmation state on unmount.
-No persistent browser storage is introduced.
+record fails the whole load. The controller clears decrypted records on lock
+and account change. The Trash view clears its search and confirmation state on
+unmount. You can queue a move or restore during an outage. Permanent deletion
+requires a connection. [Offline editing and device conflicts](offline-edits.md)
 
 ## Migration, encryption and concurrency
 
@@ -32,16 +33,15 @@ on each move/restore, preventing an old editor or confirmation from becoming
 valid after a move-and-restore cycle. Edits require active state; restore/purge
 require Trash state. Each checks both counters. Counter overflow is rejected.
 
-Lifecycle timestamps/counters are server-visible metadata outside GCM AAD. These
-checks prevent accidental/concurrent stale writes; they do not implement
-malicious-server rollback detection or offline sync. No plaintext entry fields
-or new cryptographic formats are introduced.
+Lifecycle timestamps and counters are server-visible metadata outside GCM AAD.
+The checks prevent stale writes during concurrent work and offline replay.
+Malicious-server rollback detection remains future work.
 
 All mutation services lock the owning vault before the entry in transactions.
 Creates and backup restores use the same vault lock, serializing storage budgets
 and competing lifecycle operations. Session ownership, CSRF and no-store remain
-mandatory. Stale/wrong-state writes return 409 and are never replayed. After an
-uncertain network outcome, unlock/refresh before retrying.
+mandatory. Stale or wrong-state writes return 409. After an uncertain outcome,
+the client checks the current envelope before replaying a queued move or restore.
 
 ## API and deployment
 

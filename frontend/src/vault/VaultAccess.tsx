@@ -67,6 +67,7 @@ export default function VaultAccess({ controller }: { controller: VaultControlle
     <LockKeyhole size={28} className="text-blue-400" />
     <h2 id="unlock-heading" className="mt-5 text-xl font-semibold">{creating ? 'Create your encrypted vault' : 'Your vault is locked'}</h2>
     <p className="mt-3 text-sm leading-7 text-slate-400">Your master password stays on this device. It unlocks your vault separately from your NEXORA account.</p>
+    {!creating && !recovering && state.offlineReady && <p className="mt-2 text-xs leading-6 text-slate-400">If the connection is unavailable, your master password can open the last synced data in this tab.</p>}
     {(localError || state.error) && <p role="alert" className="mt-4 text-sm text-red-300">{localError || state.error}</p>}
     {state.recoveryResult && <p role="status" className="mt-4 text-sm text-blue-300">{state.recoveryResult}</p>}
     {!state.loaded ? <button disabled={state.busy} onClick={() => void controller.load()} className="mt-6 rounded-xl brand-primary px-5 py-3 text-sm disabled:opacity-50">{state.busy ? 'Loading vault...' : 'Load vault'}</button> : <>

@@ -169,5 +169,5 @@ decrypts the browser archive and both original/restored records to verify exact 
 and distinct nonces. No real vault data is used for test records.
 
 Run the existing frontend tests/build/lint and Django tests as documented in README.
-Offline edits and sync, automated backups, legacy migration, and an independent
+Automated backups, legacy migration, and an independent
 security audit remain outside the backup workflow.

@@ -31,6 +31,7 @@ export default function EntryDialog({ controller, entry, kind, onClose }: {
   const latest = entry && state.entries.find((item) => item.envelope.id === entry.envelope.id)
   const changed = Boolean(entry && (!latest || latest.envelope.revision !== entry.envelope.revision ||
     latest.envelope.state_version !== entry.envelope.state_version))
+  const pendingChange = Boolean(entry && state.pending.some(({ write }) => write.envelope.id === entry.envelope.id))
   useEffect(() => {
     dialog.current?.showModal()
     return () => { fileRead.current?.abort(); fileRead.current = null }
@@ -67,7 +68,7 @@ export default function EntryDialog({ controller, entry, kind, onClose }: {
   }
 
   async function save(asCopy = false) {
-    if (state.busy || fileRead.current || (changed && !asCopy)) return
+    if (state.busy || fileRead.current || ((changed || pendingChange) && !asCopy)) return
     setValidationError('')
     let payload = data
     if (!data.title.trim()) { setValidationError('Enter a title.'); return }
@@ -85,7 +86,7 @@ export default function EntryDialog({ controller, entry, kind, onClose }: {
   }
 
   async function remove() {
-    if (!entry || state.busy || fileRead.current || changed) return
+    if (!entry || state.busy || fileRead.current || changed || pendingChange) return
     if (!confirmDelete) { setConfirmDelete(true); return }
     if (await controller.remove(entry.envelope.id, entry.envelope.revision, entry.envelope.state_version)) onClose()
   }
@@ -96,6 +97,7 @@ export default function EntryDialog({ controller, entry, kind, onClose }: {
     <p className="mt-2 text-xs leading-6 text-slate-400">All entry fields are encrypted on this device before saving.</p>
     {(validationError || state.error) && <p role="alert" className="mt-4 text-sm text-red-300">{validationError || state.error}</p>}
     {changed && <p role="status" className="mt-4 text-sm text-amber-200">This entry changed on another device. Save your edits as a new copy or close this editor.</p>}
+    {pendingChange && <p role="status" className="mt-4 text-sm text-amber-200">Sync or discard this entry’s local change before changing it again.</p>}
     <form onSubmit={(event) => { event.preventDefault(); void save() }} className="mt-5 space-y-4">
       <fieldset disabled={state.busy || reading} className="space-y-4 disabled:opacity-60">
         <label className="block text-xs text-slate-300">Title<input required maxLength={500} value={data.title} onChange={(event) => setData({ ...data, title: event.target.value })} className={inputClass} /></label>
@@ -131,16 +133,16 @@ export default function EntryDialog({ controller, entry, kind, onClose }: {
         </div>
       </fieldset>
       <div className="flex flex-wrap items-center justify-between gap-3 pt-3">
-        {entry && !changed && <button type="button" disabled={state.busy || reading} onClick={() => void remove()} className="rounded-xl border border-amber-300/20 px-4 py-3 text-xs text-amber-200 disabled:opacity-50">{confirmDelete ? 'Confirm move to Trash' : 'Move to Trash'}</button>}
+        {entry && !changed && <button type="button" disabled={state.busy || reading || pendingChange} onClick={() => void remove()} className="rounded-xl border border-amber-300/20 px-4 py-3 text-xs text-amber-200 disabled:opacity-50">{confirmDelete ? 'Confirm move to Trash' : 'Move to Trash'}</button>}
         <div className="ml-auto flex gap-3">
           <button type="button" onClick={onClose} className="rounded-xl border border-white/10 px-4 py-3 text-xs">Cancel</button>
           {changed ? <button type="button" disabled={state.busy || reading} onClick={(event) => {
             if (event.currentTarget.form?.reportValidity()) void save(true)
           }} className="rounded-xl brand-primary px-4 py-3 text-xs font-semibold disabled:opacity-50">Save as new copy</button>
-            : <button disabled={state.busy || reading} className="rounded-xl brand-primary px-4 py-3 text-xs font-semibold disabled:opacity-50">{reading ? 'Reading files...' : state.busy ? 'Encrypting and saving...' : 'Save encrypted entry'}</button>}
+            : <button disabled={state.busy || reading || pendingChange} className="rounded-xl brand-primary px-4 py-3 text-xs font-semibold disabled:opacity-50">{reading ? 'Reading files...' : state.busy ? 'Encrypting and saving...' : 'Save encrypted entry'}</button>}
         </div>
       </div>
-      {confirmDelete && <p role="status" className="text-xs leading-6 text-amber-200">The saved entry will move to Trash and can be restored. Unsaved edits are discarded. Cancel closes without moving it.</p>}
+      {confirmDelete && <p role="status" className="text-xs leading-6 text-amber-200">The saved entry moves to Trash once the change syncs. Unsaved edits are discarded. Cancel closes without moving it.</p>}
     </form>
   </dialog>
 }

@@ -152,8 +152,16 @@ counts toward vault capacity. New backups include active entries only. Apply the
 additive backend migration before using this frontend; see
 [Trash behavior and API compatibility](docs/trash.md).
 
+An already unlocked vault can save new or edited entries when the connection
+drops. If it locks, use the master password to reopen the last synced entries
+offline in the same tab. Queue moves to Trash and restores, and review them
+alongside edits in **Local changes**. Permanent deletion requires a connection.
+If another device changed an edited entry, keep the draft as a separate copy
+or discard it.
+[Offline editing guide](docs/offline-edits.md)
+
 Public release requires an independent security audit and hosted deployment
-validation. Offline editing remains outstanding.
+validation.
 Use synthetic test entries. Existing CLI files, Fernet data and legacy databases
 have not been migrated or removed. The local `backend/.env` remains untracked
 and ignored; its historical Git copies have not been removed.

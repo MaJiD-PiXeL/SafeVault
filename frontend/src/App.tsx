@@ -45,6 +45,7 @@ import MasterPasswordPanel from './vault/MasterPasswordPanel'
 import RecoveryKeyPanel from './vault/RecoveryKeyPanel'
 import BackupPanel from './vault/BackupPanel'
 import OfflineBackupPanel from './vault/OfflineBackupPanel'
+import PendingChanges from './vault/PendingChanges'
 import HealthPanel from './vault/HealthPanel'
 import { analyzePasswords } from './vault/health'
 import TrashPanel from './vault/TrashPanel'
@@ -99,7 +100,7 @@ const navigation = [
 
 function App({ initialAccountLink }: { initialAccountLink: ReturnType<typeof takeAccountLink> }) {
   const account = useAccount()
-  const vault = useVault(account.user?.id ?? null, account.status === 'ready')
+  const vault = useVault(account.user?.id ?? null, account.user !== null)
   const [activePage, setActivePage] = useState(initialAccountLink ? 'Account' : 'Overview')
   const [accountLink, setAccountLink] = useState(initialAccountLink?.valid ? initialAccountLink.link : null)
   const [accountLinkNotice, setAccountLinkNotice] = useState(initialAccountLink?.valid === false ? 'This account email link is invalid.' : '')
@@ -436,11 +437,16 @@ function App({ initialAccountLink }: { initialAccountLink: ReturnType<typeof tak
             </div>
           </div>
 
+          {vault.unlocked && vault.offlineUnlocked && <div role="status" className="mt-7 rounded-xl border border-amber-300/20 p-4 text-xs text-amber-200">
+            Vault opened offline. You can read the last synced records, save drafts and queue Trash changes.
+          </div>}
+          {vault.unlocked && <PendingChanges controller={vault.controller} />}
+
           {collectionPage ? (account.user && !vault.unlocked ?
             <VaultAccess key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} /> : <>
           {account.user && <div className="mt-7 rounded-xl border border-blue-400/15 bg-blue-500/5 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3"><span className="text-xs text-blue-200">Vault unlocked on this device</span><div className="flex gap-3"><button disabled={vault.busy} onClick={() => void vault.controller.refresh()} className="text-xs text-slate-300 disabled:opacity-50">Refresh entries</button><button onClick={vault.controller.lock} className="rounded-lg border border-blue-400/25 px-3 py-2 text-xs text-blue-200">Lock vault</button></div></div>
-            {vault.error && <p role="alert" className="mt-3 text-sm text-red-300">{vault.error}</p>}
+            {vault.error && !vault.pending.length && !vault.pendingError && <p role="alert" className="mt-3 text-sm text-red-300">{vault.error}</p>}
             <p className="mt-3 text-[11px] text-amber-200/70">Independent security audit pending. Use test credentials.</p>
           </div>}
           <div className="mt-9 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -698,14 +704,14 @@ function App({ initialAccountLink }: { initialAccountLink: ReturnType<typeof tak
           </>) : ['Account', 'Settings'].includes(activePage) ? (
             accountLink ? <AccountLinkPanel key={accountLink.token} link={accountLink} onFinish={(notice) => {
               if (notice && accountLink.action === 'reset') {
-                vault.controller.lock()
+                vault.controller.forgetOffline()
                 void account.refresh()
               }
               setAccountLink(null)
               setAccountLinkNotice(notice ?? '')
             }} /> : <>
               {accountLinkNotice && <p role="status" className="mt-6 text-sm text-blue-300">{accountLinkNotice}</p>}
-              <AccountPanel key={account.user?.id ?? 'anonymous'} user={account.user} status={account.status} onUserChange={account.acceptUser} onRefresh={account.refresh} onLock={vault.controller.lock} />
+              <AccountPanel key={account.user?.id ?? 'anonymous'} user={account.user} status={account.status} onUserChange={account.acceptUser} onRefresh={account.refresh} onLock={vault.controller.forgetOffline} />
             </>
           ) : activePage === 'Backups' ? (
             !account.user ? <section className="mt-9 rounded-2xl border border-white/10 bg-vault-surface p-6"><h2 className="text-lg font-semibold">Encrypted backups</h2><p className="mt-3 text-sm text-slate-400">Sign in and unlock a vault to export or restore an encrypted backup.</p></section> : !vault.unlocked ? <VaultAccess key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} /> : <BackupPanel key={`${account.user.id}:${vault.lockEpoch}`} controller={vault.controller} />
