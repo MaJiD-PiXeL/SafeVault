@@ -399,13 +399,31 @@ export class VaultController {
     return { vaults, offlineUnlocked: false, error: '' }
   }
 
+  async #readWithLocalFallback<T>(read: () => Promise<T>, key: CryptoKey, vaultId: string, keyVersion: number, signal: AbortSignal) {
+    try { return await read() }
+    catch (error) {
+      signal.throwIfAborted()
+      if (networkUnavailable(error)) {
+        const drafts = await this.#readPending(key, vaultId, keyVersion, signal)
+        signal.throwIfAborted()
+        this.#publish(drafts)
+      }
+      throw error
+    }
+  }
+
   refresh = () => this.#run(async ({ signal }) => {
-    if (!this.#key || !this.#state.selectedId) throw new VaultDataError('Unlock your vault first.')
+    const key = this.#key
     const id = this.#state.selectedId
+    if (!key || !id) throw new VaultDataError('Unlock your vault first.')
     const keyVersion = this.#selectedVault()?.key_version ?? 1
-    const connection = await this.#revalidateOffline(signal)
-    const snapshot = await this.#readEntries(this.#key, id, signal, keyVersion)
-    const drafts = await this.#readPending(this.#key, id, keyVersion, signal)
+    const { connection, snapshot } = await this.#readWithLocalFallback(async () => {
+      const connection = await this.#revalidateOffline(signal)
+      signal.throwIfAborted()
+      return { connection, snapshot: await this.#readEntries(key, id, signal, keyVersion) }
+    }, key, id, keyVersion, signal)
+    signal.throwIfAborted()
+    const drafts = await this.#readPending(key, id, keyVersion, signal)
     return { patch: drafts.pendingError ? { ...snapshot, ...drafts, ...connection } :
       { ...await this.#replay(snapshot, drafts.pending, signal, true), pendingError: '', ...connection } }
   }, { allowOffline: true })
@@ -424,20 +442,24 @@ export class VaultController {
         if (current() && !this.#offlineCache) this.#publish({ vaults, selectedId: vaults.find((vault) => vault.id === selectedId)?.id ?? vaults[0]?.id ?? null })
         return
       }
-      const connection = await this.#revalidateOffline(signal)
-      if (!current()) return
       const keyVersion = this.#selectedVault()?.key_version ?? 1
-      const drafts = await this.#readPending(key, selectedId, keyVersion, signal)
+      const { connection, remote, snapshot } = await this.#readWithLocalFallback(async () => {
+        const connection = await this.#revalidateOffline(signal)
+        signal.throwIfAborted()
+        const remote = await this.#api.entriesVersion(selectedId, signal, keyVersion)
+        signal.throwIfAborted()
+        const snapshot = remote === entriesVersion
+          ? { entries: this.#state.entries, trash: this.#state.trash, entriesVersion }
+          : await this.#readEntries(key, selectedId, signal, keyVersion)
+        return { connection, remote, snapshot }
+      }, key, selectedId, keyVersion, signal)
       if (!current()) return
-      const remote = await this.#api.entriesVersion(selectedId, signal, keyVersion)
+      const drafts = await this.#readPending(key, selectedId, keyVersion, signal)
       if (!current()) return
       if (remote === entriesVersion && !drafts.pending.length) {
         if (connection.vaults || this.#state.pending.length || this.#state.pendingError !== drafts.pendingError) this.#publish({ ...drafts, ...connection })
         return
       }
-      const snapshot = remote === entriesVersion
-        ? { entries: this.#state.entries, trash: this.#state.trash, entriesVersion }
-        : await this.#readEntries(key, selectedId, signal, keyVersion)
       const patch = drafts.pendingError ? { ...snapshot, ...drafts } :
         { ...await this.#replay(snapshot, drafts.pending, signal), pendingError: '' }
       if (current()) this.#publish({ ...patch, ...connection })

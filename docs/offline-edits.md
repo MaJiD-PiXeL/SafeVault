@@ -7,7 +7,9 @@ shows the last known server versions. Open **Review draft** to read the local
 version and download its attachments.
 
 While the vault is unlocked, the browser retries on reconnect and during regular sync checks. Use
-**Sync now** to retry manually. Updates require the server's original entry
+**Sync now** to retry manually. These checks also pick up drafts saved or
+discarded in another tab of the same browser while the connection is down.
+Updates require the server's original entry
 revision, Trash state version and vault key version to match. If another device
 edited, trashed or removed the original, the server version takes precedence
 in the vault list and your draft stays available. Choose **Save draft as new

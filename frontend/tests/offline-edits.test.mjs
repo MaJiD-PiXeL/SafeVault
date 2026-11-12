@@ -130,6 +130,33 @@ test('a lost save response acknowledges the same ciphertext without replaying a 
   assert.deepEqual(await outbox.list(1, vaultId), [])
 })
 
+test('tabs pick up local drafts and discards even when the vault cannot reach the server', async () => {
+  const { state, open } = setup()
+  const writer = await open()
+  const reader = await open()
+  const offlineReader = await open()
+  offlineReader.lock()
+  state.offline = true
+  assert.equal(await offlineReader.unlock(fixture.master), true)
+
+  assert.equal(await writer.save(draft, entryId, 1, 1), true)
+  for (const tab of [reader, offlineReader]) {
+    await tab.sync()
+    const { pending, entries } = tab.getSnapshot()
+    assert.equal(pending[0].data.title, draft.title)
+    assert.equal(pending[0].status, 'waiting')
+    assert.equal(entries[0].data.title, fixture.payload.title)
+  }
+
+  assert.equal(await writer.resolvePending(pendingWriteId(writer.getSnapshot().pending[0].write), false), true)
+  for (const tab of [reader, offlineReader]) {
+    assert.equal(await tab.refresh(), false)
+    assert.deepEqual(tab.getSnapshot().pending, [])
+  }
+  assert.equal(state.writes, 0)
+  assert.equal(offlineReader.getSnapshot().offlineUnlocked, true)
+})
+
 test('a remote edit preserves both versions and creates a copy only after the user chooses it', async () => {
   const { state, open, entries, changeRemote } = setup()
   const controller = await open()
