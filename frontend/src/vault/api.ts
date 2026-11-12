@@ -1,8 +1,12 @@
 import { accountApi, ApiError } from '../api.ts'
-import { object, readKeyVersion, UUID, validateEnvelope, validatePreferences, validateRecoveryEnvelope, validateVault, VaultDataError } from './format.ts'
+import { fromBase64, object, readKeyVersion, UUID, validateEnvelope, validatePreferences, validateRecoveryEnvelope, validateVault, VaultDataError } from './format.ts'
 import type { EncryptedEntry, RecoveryEnvelope, SecurityPreferences, VaultMetadata } from './format.ts'
 
 type Request = (path: string, method?: string, body?: unknown, signal?: AbortSignal, timeoutMs?: number) => Promise<unknown>
+type EntryVersion = Pick<EncryptedEntry, 'id' | 'revision' | 'state_version' | 'nonce'>
+const MAX_VAULT_ENTRIES = 5000
+const MAX_VAULT_CIPHERTEXT = 32 * 1024 * 1024
+const MAX_INCREMENTAL_FETCHES = 8
 export type RestoreReceipt = { backup_id: string; archive_digest: string; entry_count: number; already_restored: boolean }
 export type RestoreEnvelope = { id: string; nonce: string; ciphertext: string }
 function validateReceipt(value: unknown, backupId: string): RestoreReceipt {
@@ -23,6 +27,19 @@ function readVersion(value: unknown): string {
 
 function versions(entry: EncryptedEntry) {
   return { expected_revision: entry.revision, expected_state_version: entry.state_version }
+}
+
+function readEntryVersion(value: unknown): EntryVersion {
+  const validCounter = (counter: unknown): counter is number =>
+    typeof counter === 'number' && Number.isSafeInteger(counter) && counter >= 1 && counter <= 2147483647
+  if (!object(value) || typeof value.id !== 'string' || !UUID.test(value.id) ||
+      !validCounter(value.revision) || !validCounter(value.state_version) || typeof value.nonce !== 'string') throw new VaultDataError()
+  fromBase64(value.nonce, 12)
+  return { id: value.id, revision: value.revision, state_version: value.state_version, nonce: value.nonce }
+}
+
+function sameEntryVersion(left: EncryptedEntry | undefined, right: EntryVersion) {
+  return left?.id === right.id && left.revision === right.revision && left.state_version === right.state_version && left.nonce === right.nonce
 }
 
 function keyVersionField(keyVersion: number | undefined) {
@@ -59,6 +76,23 @@ function validateTransition(value: unknown, entry: EncryptedEntry, trashed: bool
 }
 
 export function createVaultApi(request: Request = accountApi.vaultRequest) {
+  async function entriesVersion(id: string, signal: AbortSignal, expectedKeyVersion = 1) {
+    if (!UUID.test(id)) throw new VaultDataError()
+    const data = await request(`vaults/${id}/entries-version`, 'GET', undefined, signal)
+    if (!object(data)) throw new VaultDataError()
+    checkKeyVersion(data.key_version, expectedKeyVersion)
+    return readVersion(data.version)
+  }
+
+  async function entry(vaultId: string, id: string, signal: AbortSignal, timeoutMs?: number) {
+    if (!UUID.test(id)) throw new VaultDataError()
+    try {
+      const result = validateEnvelope(await request(`${vaultPath(vaultId)}/${id}`, 'GET', undefined, signal, timeoutMs), vaultId)
+      if (result.id !== id) throw new VaultDataError()
+      return result
+    } catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error }
+  }
+
   return {
     async vaults(signal: AbortSignal): Promise<VaultMetadata[]> {
       const data = await request('vaults', 'GET', undefined, signal)
@@ -113,12 +147,40 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
       if (JSON.stringify(result) !== JSON.stringify(vault)) throw new VaultDataError()
       return result
     },
-    async entriesVersion(id: string, signal: AbortSignal, expectedKeyVersion = 1) {
+    entriesVersion,
+    async entriesDelta(id: string, current: EncryptedEntry[], signal: AbortSignal, expectedKeyVersion = 1) {
       if (!UUID.test(id)) throw new VaultDataError()
-      const data = await request(`vaults/${id}/entries-version`, 'GET', undefined, signal)
-      if (!object(data)) throw new VaultDataError()
+      let data: unknown
+      try { data = await request(`vaults/${id}/entries-manifest`, 'GET', undefined, signal) }
+      catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error }
+      if (!object(data) || !Array.isArray(data.entries) || data.entries.length > MAX_VAULT_ENTRIES) throw new VaultDataError()
       checkKeyVersion(data.key_version, expectedKeyVersion)
-      return readVersion(data.version)
+      const version = readVersion(data.version)
+      const manifest = data.entries.map(readEntryVersion)
+      if (new Set(manifest.map((item) => item.id)).size !== manifest.length) throw new VaultDataError()
+      const entries = new Map(current.map((item) => [item.id, item]))
+      const changed = manifest.filter((item) => !sameEntryVersion(entries.get(item.id), item))
+      if (changed.length > MAX_INCREMENTAL_FETCHES || (changed.length > 0 && changed.length === manifest.length)) return null
+
+      if (changed.length) {
+        const controller = new AbortController()
+        const readSignal = AbortSignal.any([signal, controller.signal])
+        const stale = () => new ApiError('Vault changed during loading. Refresh and try again.', 409)
+        try {
+          const results = await Promise.all(changed.map(async (item) => {
+            const result = await entry(id, item.id, readSignal, 60000)
+            if (!result || !sameEntryVersion(result, item)) throw stale()
+            return result
+          }))
+          if (await entriesVersion(id, readSignal, expectedKeyVersion) !== version) throw stale()
+          for (const item of results) entries.set(item.id, item)
+        } finally { controller.abort() }
+      }
+      const envelopes = manifest.map((item) => entries.get(item.id)!)
+      if (envelopes.reduce((size, item) => size + item.ciphertext.length, 0) > MAX_VAULT_CIPHERTEXT) {
+        throw new VaultDataError('This vault is too large for this client.')
+      }
+      return { envelopes, entriesVersion: version }
     },
     async entries(id: string, signal: AbortSignal, onVersion?: (version: string) => void, expectedKeyVersion = 1): Promise<EncryptedEntry[]> {
       const entries: EncryptedEntry[] = []
@@ -133,12 +195,12 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
         const pageVersion = data.version === undefined ? null : readVersion(data.version)
         if (page > 1 && version !== pageVersion) throw new ApiError('Vault changed during loading. Refresh and try again.', 409)
         version = pageVersion
-        if ((data.count as number) > 5000) throw new VaultDataError('This vault is too large for this client.')
+        if ((data.count as number) > MAX_VAULT_ENTRIES) throw new VaultDataError('This vault is too large for this client.')
         if (count !== -1 && count !== data.count) throw new VaultDataError('Vault changed during loading. Refresh and try again.')
         count = data.count as number
         const batch = data.results.map((item) => validateEnvelope(item, id))
         totalBytes += batch.reduce((size, item) => size + item.ciphertext.length, 0)
-        if (totalBytes > 32 * 1024 * 1024) throw new VaultDataError('This vault is too large for this client.')
+        if (totalBytes > MAX_VAULT_CIPHERTEXT) throw new VaultDataError('This vault is too large for this client.')
         entries.push(...batch)
         if (new Set(entries.map((entry) => entry.id)).size !== entries.length) throw new VaultDataError('Vault changed during loading. Refresh and try again.')
         if (data.next === null) {
@@ -150,14 +212,7 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
       }
       throw new VaultDataError('This vault is too large for this client.')
     },
-    async entry(vaultId: string, id: string, signal: AbortSignal) {
-      if (!UUID.test(id)) throw new VaultDataError()
-      try {
-        const result = validateEnvelope(await request(`${vaultPath(vaultId)}/${id}`, 'GET', undefined, signal), vaultId)
-        if (result.id !== id) throw new VaultDataError()
-        return result
-      } catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error }
-    },
+    entry,
     async save(vaultId: string, id: string, revision: number, encrypted: { nonce: string; ciphertext: string }, signal: AbortSignal, stateVersion = 1, keyVersion?: number) {
       if (!UUID.test(id)) throw new VaultDataError()
       const { nonce, ciphertext } = encrypted

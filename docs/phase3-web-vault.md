@@ -149,10 +149,15 @@ The offline reader opens downloaded encrypted backups in read-only mode.
 Production builds cache the public app shell to make the reader available after
 an offline reload.
 
-Unlocked clients poll the vault's entry version and refresh the encrypted
-snapshot when it changes. All pages must share a version. A stale editor can
-save its draft as a new copy, and edits to the original still require matching
-entry versions. The sync path covers active and trashed records.
+Unlocked clients poll the vault's entry version. For a small background update,
+the client compares a version manifest for active and trashed records with
+its local snapshot and fetches up to eight changed encrypted records. A
+confirmed removal disappears from the snapshot, and the client reuses already
+authenticated content when the ciphertext is identical. The client checks the
+vault version again after fetching changed records before publishing the
+snapshot. Large updates and servers without a manifest use the paginated entry
+list, where all pages must share a version. A stale editor can save its draft as
+a new copy, and edits to the original require matching entry versions.
 
 Vault encryption key rotation re-encrypts active and trashed records atomically
 and blocks writes from older key versions. See [the rotation protocol](key-rotation.md).

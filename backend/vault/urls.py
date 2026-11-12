@@ -15,6 +15,7 @@ urlpatterns = [
     path("vaults/<uuid:vault_id>/key-rotation/", api_views.KeyRotationView.as_view(), name="key-rotation"),
     path("vaults/<uuid:vault_id>/entries/", api_views.EntriesView.as_view(), name="entries"),
     path("vaults/<uuid:vault_id>/entries-version/", api_views.EntriesVersionView.as_view(), name="entries-version"),
+    path("vaults/<uuid:vault_id>/entries-manifest/", api_views.EntriesManifestView.as_view(), name="entries-manifest"),
     path("vaults/<uuid:vault_id>/entries/<uuid:entry_id>/", api_views.EntryView.as_view(), name="entry"),
     path("vaults/<uuid:vault_id>/entries/<uuid:entry_id>/restore/", api_views.EntryRestoreView.as_view(), name="entry-restore"),
     path("vaults/<uuid:vault_id>/entries/<uuid:entry_id>/purge/", api_views.EntryPurgeView.as_view(), name="entry-purge"),

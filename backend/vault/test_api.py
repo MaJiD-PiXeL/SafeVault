@@ -96,6 +96,25 @@ class EncryptedVaultAPITests(TestCase):
         second = self.write("post", "/api/vaults/", {**FIXTURE["vault"], "id": str(uuid.uuid4())}).json()
         self.assertEqual(self.client.get(f"/api/vaults/{second['id']}/entries/{row['id']}/").status_code, 404)
 
+    def test_manifest_tracks_trash_and_purge_with_only_owned_entry_versions(self):
+        vault_path = f"/api/vaults/{self.vault['id']}/"
+        path = vault_path + "entries-manifest/"
+        row = self.add().json()
+        detail = self.path + row["id"] + "/"
+        original = self.client.get(path).json()
+        self.assertEqual(original["entries"], [{field: row[field] for field in ("id", "revision", "state_version", "nonce")}])
+        self.assertEqual(self.write("delete", detail, {"expected_revision": 1}).status_code, 200)
+        trashed = self.client.get(path).json()
+        self.assertEqual(trashed["entries"], [{**original["entries"][0], "state_version": 2}])
+        self.assertNotEqual(trashed["version"], original["version"])
+        self.assertEqual({key: trashed[key] for key in ("version", "key_version")},
+                         self.client.get(vault_path + "entries-version/").json())
+        self.assertEqual(self.write("delete", detail + "purge/", {"expected_revision": 1, "expected_state_version": 2}).status_code, 204)
+        self.assertEqual(self.client.get(path).json()["entries"], [])
+        self.assertEqual(Client().get(path).status_code, 403)
+        self.client.force_login(self.other, backend="django.contrib.auth.backends.ModelBackend")
+        self.assertEqual(self.client.get(path).status_code, 404)
+
     def test_invalid_profiles_encoding_oversize_and_noncanonical_uuids_are_rejected(self):
         for name, value in (("kdf_memory_kib", 1024), ("kdf_iterations", 1), ("format_version", 2), ("kdf", "pbkdf2")):
             response = self.write("post", "/api/vaults/", {**FIXTURE["vault"], "id": str(uuid.uuid4()), name: value})

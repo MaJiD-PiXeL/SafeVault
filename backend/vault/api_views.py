@@ -11,7 +11,7 @@ from .models import RestoreReceipt, SecuritySettings, Vault, VaultEntry
 from .serializers import (EntryDeleteSerializer, EntrySerializer, EntryUpdateSerializer, EntryWriteSerializer,
                           KeyRotationSerializer, MasterPasswordSerializer, RecoverVaultSerializer,
                           RecoverySetupSerializer, RestoreSerializer, SettingsSerializer, VaultSerializer)
-from .services import (KeyVersionConflict, NonceConflict, RevisionConflict, create_entry, create_vault,
+from .services import (MAX_VAULT_ENTRIES, KeyVersionConflict, NonceConflict, RevisionConflict, create_entry, create_vault,
                        change_master_password, delete_entry, list_entries, purge_entry, recover_vault, restore_entry,
                        restore_entries, rotate_key, setup_recovery, update_entry)
 from .validators import MAX_ENTRY_JSON_BYTES
@@ -98,6 +98,19 @@ class EntriesVersionView(VaultAPIView):
     def get(self, request, vault_id):
         vault = Vault.objects.for_user(request.user).only("entries_version", "key_version").get(pk=vault_id)
         return Response({"version": str(vault.entries_version), "key_version": vault.key_version})
+
+
+class EntriesManifestView(VaultAPIView):
+    def get(self, request, vault_id):
+        owned = Vault.objects.for_user(request.user).only("entries_version", "key_version")
+        snapshot = owned.get(pk=vault_id)
+        entries = list_entries(user=request.user, vault_id=vault_id, state="all")
+        records = list(entries.values("id", "revision", "state_version", "nonce")[:MAX_VAULT_ENTRIES + 1])
+        if snapshot.entries_version != owned.get(pk=vault_id).entries_version:
+            raise Conflict("The vault changed while loading. Refresh to try again.")
+        if len(records) > MAX_VAULT_ENTRIES:
+            raise ValidationError("The vault has too many entries.")
+        return Response({"version": str(snapshot.entries_version), "key_version": snapshot.key_version, "entries": records})
 
 
 class EntriesView(VaultAPIView):

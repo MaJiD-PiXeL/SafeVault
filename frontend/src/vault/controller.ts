@@ -222,12 +222,15 @@ export class VaultController {
     }
   }
 
-  async #decryptSnapshot(key: CryptoKey, { envelopes, entriesVersion }: EncryptedSnapshot, signal: AbortSignal): Promise<EntrySnapshot> {
+  async #decryptSnapshot(key: CryptoKey, { envelopes, entriesVersion }: EncryptedSnapshot, signal: AbortSignal, previous: UnlockedEntry[] = []): Promise<EntrySnapshot> {
     const entries: UnlockedEntry[] = []
+    const known = new Map(previous.map((item) => [item.envelope.id, item]))
     try {
       for (const envelope of envelopes) {
         signal.throwIfAborted()
-        entries.push({ envelope, data: await decryptEntry(key, envelope) })
+        const cached = known.get(envelope.id)
+        const data = cached && sameContent(cached.envelope, envelope) ? cached.data : await decryptEntry(key, envelope)
+        entries.push({ envelope, data })
       }
     } catch (error) {
       signal.throwIfAborted()
@@ -240,6 +243,14 @@ export class VaultController {
 
   async #readEntries(key: CryptoKey, id: string, signal: AbortSignal, keyVersion = this.#selectedVault()?.key_version ?? 1) {
     return this.#decryptSnapshot(key, await this.#readEnvelopes(id, signal, keyVersion), signal)
+  }
+
+  async #readSyncEntries(key: CryptoKey, id: string, signal: AbortSignal, keyVersion: number) {
+    const current = [...this.#state.entries, ...this.#state.trash]
+    const delta = current.length >= 2
+      ? await this.#api.entriesDelta?.(id, current.map(({ envelope }) => envelope), signal, keyVersion)
+      : null
+    return this.#decryptSnapshot(key, delta ?? await this.#readEnvelopes(id, signal, keyVersion), signal, current)
   }
 
   async #readPending(key: CryptoKey, vaultId: string, keyVersion: number, signal: AbortSignal) {
@@ -450,7 +461,7 @@ export class VaultController {
         signal.throwIfAborted()
         const snapshot = remote === entriesVersion
           ? { entries: this.#state.entries, trash: this.#state.trash, entriesVersion }
-          : await this.#readEntries(key, selectedId, signal, keyVersion)
+          : await this.#readSyncEntries(key, selectedId, signal, keyVersion)
         return { connection, remote, snapshot }
       }, key, selectedId, keyVersion, signal)
       if (!current()) return
