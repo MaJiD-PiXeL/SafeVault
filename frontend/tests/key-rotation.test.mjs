@@ -60,7 +60,7 @@ function mockVaultServer() {
     requests.push({ path, method, body })
     if (path === 'vaults') return { vaults: [vault] }
     if (path === 'security-settings') return { auto_lock_seconds: 300, lock_on_hidden: true }
-    if (path.endsWith('/entries?state=all&page=1')) return { results: [envelope], count: 1, next: null, version: snapshot, key_version: vault.key_version ?? 1 }
+    if (path.endsWith('/entries?state=all&offset=0')) return { results: [envelope], count: 1, next_offset: null, version: snapshot, key_version: vault.key_version ?? 1 }
     if (path.endsWith('/entries-version')) return { version: snapshot, key_version: vault.key_version ?? 1 }
     if (path.endsWith('/key-rotation')) {
       rotationRequests += 1

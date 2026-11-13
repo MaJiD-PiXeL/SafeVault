@@ -30,7 +30,7 @@ test('account transport accepts combined Trash pagination and lifecycle routes w
   const account = createAccountApi('/api')
   const api = createVaultApi(account.vaultRequest)
   assert.equal((await api.entries(fixture.vault.id, signal()))[0].deleted_at, removed.deleted_at)
-  assert.equal(calls[0].url, `/api/vaults/${fixture.vault.id}/entries/?state=all&page=1`)
+  assert.equal(calls[0].url, `/api/vaults/${fixture.vault.id}/entries/?state=all&offset=0`)
   await api.remove(fixture.entry, signal())
   await api.restoreEntry(removed, signal())
   await api.purge(removed, signal())

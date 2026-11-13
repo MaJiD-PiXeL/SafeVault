@@ -247,7 +247,7 @@ export class VaultController {
 
   async #readSyncEntries(key: CryptoKey, id: string, signal: AbortSignal, keyVersion: number) {
     const current = [...this.#state.entries, ...this.#state.trash]
-    const delta = current.length >= 2
+    const delta = current.length > 0
       ? await this.#api.entriesDelta?.(id, current.map(({ envelope }) => envelope), signal, keyVersion)
       : null
     return this.#decryptSnapshot(key, delta ?? await this.#readEnvelopes(id, signal, keyVersion), signal, current)

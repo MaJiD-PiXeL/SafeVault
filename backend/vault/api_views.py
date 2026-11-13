@@ -1,5 +1,6 @@
 from django.core.exceptions import ValidationError as ModelValidationError
 from django.db import IntegrityError, transaction
+from django.db.models.functions import Length
 from rest_framework.exceptions import APIException, NotFound, ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
@@ -85,6 +86,38 @@ class EntryPagination(PageNumberPagination):
     page_size = 50
 
 
+MAX_PAGE_CIPHERTEXT = 5 * 1024 * 1024
+
+
+def bounded_entry_page(entries, offset, version):
+    if not offset.isascii() or not offset.isdecimal() or len(offset) > 4 or int(offset) >= MAX_VAULT_ENTRIES:
+        raise ValidationError("Invalid entry offset.")
+    start = int(offset)
+    count = entries.count()
+    if count > MAX_VAULT_ENTRIES:
+        raise ValidationError("The vault has too many entries.")
+    if start and start >= count:
+        raise Conflict("The vault changed while loading. Refresh to try again.")
+
+    sizes = entries.values_list(Length("ciphertext"), flat=True)[start:start + EntryPagination.page_size]
+    total = 0
+    end = start
+    for size in sizes:
+        if total + size > MAX_PAGE_CIPHERTEXT:
+            break
+        total += size
+        end += 1
+    if start == end and count > start:
+        raise Conflict("The vault changed while loading or contains an oversized entry.")
+    # Read ciphertext only from the version used to calculate the page budget.
+    page = entries.filter(vault__entries_version=version)[start:end]
+    return Response({
+        "count": count,
+        "next_offset": end if end < count else None,
+        "results": EntrySerializer(page, many=True).data,
+    })
+
+
 class EntryJSONParser(BoundedJSONParser):
     max_bytes = MAX_ENTRY_JSON_BYTES
 
@@ -105,7 +138,7 @@ class EntriesManifestView(VaultAPIView):
         owned = Vault.objects.for_user(request.user).only("entries_version", "key_version")
         snapshot = owned.get(pk=vault_id)
         entries = list_entries(user=request.user, vault_id=vault_id, state="all")
-        records = list(entries.values("id", "revision", "state_version", "nonce")[:MAX_VAULT_ENTRIES + 1])
+        records = list(entries.values("id", "revision", "state_version", "nonce", "deleted_at", "updated_at")[:MAX_VAULT_ENTRIES + 1])
         if snapshot.entries_version != owned.get(pk=vault_id).entries_version:
             raise Conflict("The vault changed while loading. Refresh to try again.")
         if len(records) > MAX_VAULT_ENTRIES:
@@ -120,9 +153,13 @@ class EntriesView(VaultAPIView):
         owned = Vault.objects.for_user(request.user).only("entries_version", "key_version")
         snapshot = owned.get(pk=vault_id)
         entries = list_entries(user=request.user, vault_id=vault_id, state=request.query_params.get("state", "active"))
-        paginator = EntryPagination()
-        page = paginator.paginate_queryset(entries, request)
-        response = paginator.get_paginated_response(EntrySerializer(page, many=True).data)
+        offset = request.query_params.get("offset")
+        if offset is not None:
+            response = bounded_entry_page(entries, offset, snapshot.entries_version)
+        else:
+            paginator = EntryPagination()
+            page = paginator.paginate_queryset(entries, request)
+            response = paginator.get_paginated_response(EntrySerializer(page, many=True).data)
         if snapshot.entries_version != owned.get(pk=vault_id).entries_version:
             raise Conflict("The vault changed while loading. Refresh to try again.")
         response.data["version"] = str(snapshot.entries_version)

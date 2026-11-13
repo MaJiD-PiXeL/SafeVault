@@ -33,7 +33,32 @@ test('entry pagination constructs local routes instead of following server-suppl
       : { count: 2, results: [second], next: null }
   })
   assert.equal((await api.entries(fixture.vault.id, new AbortController().signal)).length, 2)
-  assert.deepEqual(paths, [1, 2].map((page) => `vaults/${fixture.vault.id}/entries?state=all&page=${page}`))
+  const base = `vaults/${fixture.vault.id}/entries?state=all`
+  assert.deepEqual(paths, [`${base}&offset=0`, `${base}&page=2`])
+})
+
+test('bounded pagination advances by the actual batch size and validates continuation and version', async () => {
+  const second = { ...fixture.entry, id: crypto.randomUUID() }
+  const version = crypto.randomUUID()
+  const base = `vaults/${fixture.vault.id}/entries?state=all&offset=`
+  const signal = new AbortController().signal
+  const calls = []
+  const first = { version, count: 2, next_offset: 1, results: [fixture.entry] }
+  const last = { version, count: 2, next_offset: null, results: [second] }
+  let reported
+  const api = createVaultApi(async (path) => {
+    calls.push(path)
+    return path === base + '0' ? first : last
+  })
+  assert.deepEqual(await api.entries(fixture.vault.id, signal, (value) => { reported = value }), [fixture.entry, second])
+  assert.deepEqual(calls, [base + '0', base + '1'])
+  assert.equal(reported, version)
+  for (const malformed of [{ ...first, next_offset: 0 }, { ...first, next_offset: 2 },
+    { ...first, next_offset: '1' }, { ...first, results: [] }, { ...first, version: undefined }]) {
+    await assert.rejects(createVaultApi(async () => malformed).entries(fixture.vault.id, signal), { name: 'VaultDataError' })
+  }
+  const racing = createVaultApi(async (path) => path === base + '0' ? first : { ...last, version: crypto.randomUUID() })
+  await assert.rejects(racing.entries(fixture.vault.id, signal), (error) => error.status === 409)
 })
 
 test('pagination detects incomplete snapshots, duplicates, wrong vaults and allocation limits', async () => {

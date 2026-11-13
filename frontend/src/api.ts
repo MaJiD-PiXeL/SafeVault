@@ -89,7 +89,9 @@ export function createAccountApi(baseUrl = import.meta.env?.VITE_API_BASE_URL ??
   return {
     session,
     async vaultRequest(path: string, method = 'GET', body?: unknown, signal?: AbortSignal, timeoutMs = 10000) {
-      if (!/^[a-z0-9/-]+(?:\?(?:state=all&)?page=[1-9][0-9]{0,2})?$/.test(path)) throw new ApiError('Invalid API path.', 400)
+      const pagePath = /^[a-z0-9/-]+(?:\?(?:state=all&)?page=[1-9][0-9]{0,2})?$/
+      const offsetPath = /^vaults\/[0-9a-f-]{36}\/entries\?state=all&offset=(?:0|[1-9][0-9]{0,3})$/
+      if (!pagePath.test(path) && !offsetPath.test(path)) throw new ApiError('Invalid API path.', 400)
       return request(path, method, body, signal, '', Math.min(60000, Math.max(1000, timeoutMs)))
     },
     async signIn(username: string, password: string) {

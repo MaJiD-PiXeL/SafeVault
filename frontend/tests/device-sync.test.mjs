@@ -11,6 +11,7 @@ const first = crypto.randomUUID()
 const second = crypto.randomUUID()
 const preferences = { auto_lock_seconds: 300, lock_on_hidden: true }
 const manifestRow = ({ id, revision, state_version, nonce }) => ({ id, revision, state_version, nonce })
+const manifestRowWithLifecycle = (entry) => ({ ...manifestRow(entry), deleted_at: entry.deleted_at, updated_at: entry.updated_at })
 
 test('a page from a different vault snapshot is rejected even if the count matches', async () => {
   const requests = []
@@ -123,8 +124,8 @@ test('background sync fetches changed envelopes and reuses already authenticated
     if (path === 'vaults') return { vaults: [fixture.vault] }
     if (path === 'security-settings') return preferences
     if (path === `${base}/entries-version`) return { version }
-    if (path === `${base}/entries-manifest`) return { version, key_version: 1, entries: remote.map(manifestRow) }
-    if (path === `${base}/entries?state=all&page=1`) return { version, count: remote.length, next: null, results: remote }
+    if (path === `${base}/entries-manifest`) return { version, key_version: 1, entries: remote.map(manifestRowWithLifecycle) }
+    if (path === `${base}/entries?state=all&offset=0`) return { version, count: remote.length, next_offset: null, results: remote }
     return remote.find((item) => path === `${base}/entries/${item.id}`)
   })
   const controller = new VaultController(api, async () => new Uint8Array(Buffer.from(fixture.wrapping_key_hex, 'hex')))
@@ -139,12 +140,63 @@ test('background sync fetches changed envelopes and reuses already authenticated
   await controller.sync()
   const after = controller.getSnapshot()
   assert.deepEqual(requests, [`${base}/entries-version`, `${base}/entries-manifest`,
-    `${base}/entries/${edited.id}`, `${base}/entries/${moved.id}`, `${base}/entries-version`])
+    `${base}/entries/${edited.id}`, `${base}/entries-version`])
   assert.equal(after.entriesVersion, second)
   assert.equal(after.entries[0].data.title, 'Remote edit')
   assert.equal(after.entries[1].data, before.entries[0].data)
   assert.equal(after.trash[0].data, before.entries[2].data)
   assert.equal(after.trash[0].envelope.state_version, 2)
+})
+
+test('a single-record vault syncs a move and restore from metadata alone', async () => {
+  let remote = fixture.entry
+  let version = first
+  const requests = []
+  const api = createVaultApi(async (path) => {
+    requests.push(path)
+    if (path === 'vaults') return { vaults: [fixture.vault] }
+    if (path === 'security-settings') return preferences
+    if (path.endsWith('entries-version')) return { version }
+    if (path.endsWith('entries-manifest')) return { version, entries: [manifestRowWithLifecycle(remote)] }
+    return { version, count: 1, next: null, results: [remote] }
+  })
+  const controller = new VaultController(api, async () => new Uint8Array(Buffer.from(fixture.wrapping_key_hex, 'hex')))
+  controller.switchAccount(1, false)
+  assert.equal(await controller.load(), true)
+  assert.equal(await controller.unlock(fixture.master), true)
+  const original = controller.getSnapshot().entries[0]
+
+  for (const deleted of [true, false]) {
+    version = crypto.randomUUID()
+    remote = { ...remote, state_version: remote.state_version + 1,
+      deleted_at: deleted ? '2026-11-03T12:00:00Z' : null,
+      updated_at: deleted ? '2026-11-03T12:00:00Z' : '2026-11-03T12:01:00Z' }
+    requests.length = 0
+    await controller.sync()
+    const snapshot = controller.getSnapshot()
+    const records = deleted ? snapshot.trash : snapshot.entries
+    const otherRecords = deleted ? snapshot.entries : snapshot.trash
+    assert.deepEqual(otherRecords, [])
+    assert.equal(snapshot.entriesVersion, version)
+    assert.deepEqual(records[0].envelope, remote)
+    assert.equal(records[0].data, original.data)
+    assert.deepEqual(requests, [`vaults/${fixture.vault.id}/entries-version`, `vaults/${fixture.vault.id}/entries-manifest`])
+  }
+})
+
+test('old manifests fetch a changed Trash envelope and incomplete lifecycle metadata fails closed', async () => {
+  const moved = { ...fixture.entry, state_version: 2, deleted_at: '2026-11-03T12:00:00Z' }
+  const unchanged = { ...fixture.entry, id: crypto.randomUUID() }
+  let manifest = [manifestRow(moved), manifestRow(unchanged)]
+  const api = createVaultApi(async (path) => {
+    if (path.endsWith('entries-manifest')) return { version: first, entries: manifest }
+    if (path.endsWith('entries-version')) return { version: first }
+    return moved
+  })
+  const read = () => api.entriesDelta(fixture.vault.id, [fixture.entry, unchanged], new AbortController().signal)
+  assert.deepEqual((await read()).envelopes, [moved, unchanged])
+  manifest = [{ ...manifestRow(moved), deleted_at: moved.deleted_at }, manifestRow(unchanged)]
+  await assert.rejects(read(), { name: 'VaultDataError' })
 })
 
 test('an incremental snapshot is rejected when a writer changes the vault mid-fetch', async () => {

@@ -105,13 +105,16 @@ overwrite newer data. Writes are never automatically replayed. Unconfirmed
 creation requires reloading metadata before another creation attempt.
 
 The later Trash extension adds lifecycle metadata without changing encryption v1.
-The client loads active and trashed envelopes together with `?state=all&page=1`,
+The client loads active and trashed envelopes together with `?state=all&offset=0`,
 then separates them after authentication/decryption. Default entry lists include
 active items only. See [Trash](trash.md) for retention, version checks, permanent
 deletion, capacity and backup semantics.
 
-Entry pages contain 50 records. Clients construct local page paths rather than
-following server URLs, check counts/duplicates and require a complete snapshot.
+Each offset page contains up to 50 records and 5 MiB of encoded ciphertext.
+The server calculates the page boundary from ciphertext lengths before loading
+the payload. The client builds its next request from the number of records
+received and verifies the offset, record count, unique IDs and snapshot version.
+For older servers, the client continues with their numbered pages.
 Opening is limited to 5,000 entries and 32 MiB of encoded ciphertext; exceeding
 limits returns an explicit error without silently omitting entries. Entry text
 is limited to 64 KiB, and [attachments](attachments.md) fit inside a bounded
@@ -151,9 +154,11 @@ an offline reload.
 
 Unlocked clients poll the vault's entry version. For a small background update,
 the client compares a version manifest for active and trashed records with
-its local snapshot and fetches up to eight changed encrypted records. A
-confirmed removal disappears from the snapshot, and the client reuses already
-authenticated content when the ciphertext is identical. The client checks the
+its local snapshot and fetches up to eight changed encrypted records. When the
+manifest supplies the Trash status and timestamps, a move or restore with the
+same content revision and nonce updates the local record using its existing
+ciphertext. A confirmed removal disappears from the snapshot, and the client
+reuses authenticated content when the ciphertext is identical. The client checks the
 vault version again after fetching changed records before publishing the
 snapshot. Large updates and servers without a manifest use the paginated entry
 list, where all pages must share a version. A stale editor can save its draft as

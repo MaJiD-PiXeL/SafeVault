@@ -3,9 +3,12 @@ import { fromBase64, object, readKeyVersion, UUID, validateEnvelope, validatePre
 import type { EncryptedEntry, RecoveryEnvelope, SecurityPreferences, VaultMetadata } from './format.ts'
 
 type Request = (path: string, method?: string, body?: unknown, signal?: AbortSignal, timeoutMs?: number) => Promise<unknown>
-type EntryVersion = Pick<EncryptedEntry, 'id' | 'revision' | 'state_version' | 'nonce'>
+type EntryVersion = Pick<EncryptedEntry, 'id' | 'revision' | 'state_version' | 'nonce'> & {
+  lifecycle?: Pick<EncryptedEntry, 'deleted_at' | 'updated_at'>
+}
 const MAX_VAULT_ENTRIES = 5000
 const MAX_VAULT_CIPHERTEXT = 32 * 1024 * 1024
+const MAX_PAGE_CIPHERTEXT = 5 * 1024 * 1024
 const MAX_INCREMENTAL_FETCHES = 8
 export type RestoreReceipt = { backup_id: string; archive_digest: string; entry_count: number; already_restored: boolean }
 export type RestoreEnvelope = { id: string; nonce: string; ciphertext: string }
@@ -35,11 +38,16 @@ function readEntryVersion(value: unknown): EntryVersion {
   if (!object(value) || typeof value.id !== 'string' || !UUID.test(value.id) ||
       !validCounter(value.revision) || !validCounter(value.state_version) || typeof value.nonce !== 'string') throw new VaultDataError()
   fromBase64(value.nonce, 12)
-  return { id: value.id, revision: value.revision, state_version: value.state_version, nonce: value.nonce }
+  const entry = { id: value.id, revision: value.revision, state_version: value.state_version, nonce: value.nonce }
+  const { deleted_at, updated_at } = value
+  if (deleted_at === undefined && updated_at === undefined) return entry
+  const validDate = (date: unknown): date is string => typeof date === 'string' && Number.isFinite(Date.parse(date))
+  if (!validDate(updated_at) || (deleted_at !== null && !validDate(deleted_at))) throw new VaultDataError()
+  return { ...entry, lifecycle: { deleted_at, updated_at } }
 }
 
-function sameEntryVersion(left: EncryptedEntry | undefined, right: EntryVersion) {
-  return left?.id === right.id && left.revision === right.revision && left.state_version === right.state_version && left.nonce === right.nonce
+function sameContentVersion(left: EncryptedEntry | null | undefined, right: EntryVersion): left is EncryptedEntry {
+  return left?.id === right.id && left.revision === right.revision && left.nonce === right.nonce
 }
 
 function keyVersionField(keyVersion: number | undefined) {
@@ -159,7 +167,16 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
       const manifest = data.entries.map(readEntryVersion)
       if (new Set(manifest.map((item) => item.id)).size !== manifest.length) throw new VaultDataError()
       const entries = new Map(current.map((item) => [item.id, item]))
-      const changed = manifest.filter((item) => !sameEntryVersion(entries.get(item.id), item))
+      const changed: EntryVersion[] = []
+      for (const item of manifest) {
+        const cached = entries.get(item.id)
+        if (!sameContentVersion(cached, item)) {
+          changed.push(item)
+        } else if (cached.state_version !== item.state_version) {
+          if (item.lifecycle) entries.set(item.id, { ...cached, ...item.lifecycle, state_version: item.state_version })
+          else changed.push(item)
+        }
+      }
       if (changed.length > MAX_INCREMENTAL_FETCHES || (changed.length > 0 && changed.length === manifest.length)) return null
 
       if (changed.length) {
@@ -169,7 +186,7 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
         try {
           const results = await Promise.all(changed.map(async (item) => {
             const result = await entry(id, item.id, readSignal, 60000)
-            if (!result || !sameEntryVersion(result, item)) throw stale()
+            if (!sameContentVersion(result, item) || result.state_version !== item.state_version) throw stale()
             return result
           }))
           if (await entriesVersion(id, readSignal, expectedKeyVersion) !== version) throw stale()
@@ -184,31 +201,48 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
     },
     async entries(id: string, signal: AbortSignal, onVersion?: (version: string) => void, expectedKeyVersion = 1): Promise<EncryptedEntry[]> {
       const entries: EncryptedEntry[] = []
+      const seen = new Set<string>()
       let count = -1
       let totalBytes = 0
       let version: string | null = null
-      for (let page = 1; page <= 100; page += 1) {
-        const data = await request(`${vaultPath(id)}?state=all&page=${page}`, 'GET', undefined, signal, 60000)
-        if (!object(data) || !Number.isSafeInteger(data.count) || (data.count as number) < 0 ||
-            !Array.isArray(data.results) || data.results.length > 50 || (data.next !== null && typeof data.next !== 'string')) throw new VaultDataError()
+      let bounded = true
+      const path = vaultPath(id)
+      for (let page = 1; page <= MAX_VAULT_ENTRIES; page += 1) {
+        const position = bounded ? `offset=${entries.length}` : `page=${page}`
+        const data = await request(`${path}?state=all&${position}`, 'GET', undefined, signal, 60000)
+        signal.throwIfAborted()
+        if (!object(data) || typeof data.count !== 'number' || !Number.isSafeInteger(data.count) || data.count < 0 ||
+            !Array.isArray(data.results) || data.results.length > 50) throw new VaultDataError()
         checkKeyVersion(data.key_version, expectedKeyVersion)
         const pageVersion = data.version === undefined ? null : readVersion(data.version)
         if (page > 1 && version !== pageVersion) throw new ApiError('Vault changed during loading. Refresh and try again.', 409)
         version = pageVersion
-        if ((data.count as number) > MAX_VAULT_ENTRIES) throw new VaultDataError('This vault is too large for this client.')
+        if (data.count > MAX_VAULT_ENTRIES) throw new VaultDataError('This vault is too large for this client.')
         if (count !== -1 && count !== data.count) throw new VaultDataError('Vault changed during loading. Refresh and try again.')
-        count = data.count as number
+        count = data.count
+        // Older servers ignore the initial offset and return their first numbered page.
+        if (page === 1) bounded = 'next_offset' in data
+        if (bounded && version === null) throw new VaultDataError('Missing vault snapshot version.')
+        const next = bounded ? data.next_offset : data.next
         const batch = data.results.map((item) => validateEnvelope(item, id))
-        totalBytes += batch.reduce((size, item) => size + item.ciphertext.length, 0)
+        const end = entries.length + batch.length
+        if (end > count || (end === count) !== (next === null) ||
+            (next !== null && (!batch.length || (bounded ? next !== end : typeof next !== 'string' || page >= 100)))) {
+          throw new VaultDataError('Invalid vault pagination.')
+        }
+        const pageBytes = batch.reduce((size, item) => size + item.ciphertext.length, 0)
+        if (bounded && pageBytes > MAX_PAGE_CIPHERTEXT) throw new VaultDataError('Vault page exceeds the ciphertext limit.')
+        totalBytes += pageBytes
         if (totalBytes > MAX_VAULT_CIPHERTEXT) throw new VaultDataError('This vault is too large for this client.')
+        for (const entry of batch) {
+          if (seen.has(entry.id)) throw new VaultDataError('Vault changed during loading. Refresh and try again.')
+          seen.add(entry.id)
+        }
         entries.push(...batch)
-        if (new Set(entries.map((entry) => entry.id)).size !== entries.length) throw new VaultDataError('Vault changed during loading. Refresh and try again.')
-        if (data.next === null) {
-          if (entries.length !== count) throw new VaultDataError()
+        if (next === null) {
           if (version !== null) onVersion?.(version)
           return entries
         }
-        // Construct our own same-origin page path; never follow response URLs.
       }
       throw new VaultDataError('This vault is too large for this client.')
     },

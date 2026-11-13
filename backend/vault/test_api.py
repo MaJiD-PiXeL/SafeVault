@@ -102,10 +102,12 @@ class EncryptedVaultAPITests(TestCase):
         row = self.add().json()
         detail = self.path + row["id"] + "/"
         original = self.client.get(path).json()
-        self.assertEqual(original["entries"], [{field: row[field] for field in ("id", "revision", "state_version", "nonce")}])
-        self.assertEqual(self.write("delete", detail, {"expected_revision": 1}).status_code, 200)
+        fields = ("id", "revision", "state_version", "nonce", "deleted_at", "updated_at")
+        self.assertEqual(original["entries"], [{field: row[field] for field in fields}])
+        moved = self.write("delete", detail, {"expected_revision": 1})
+        self.assertEqual(moved.status_code, 200)
         trashed = self.client.get(path).json()
-        self.assertEqual(trashed["entries"], [{**original["entries"][0], "state_version": 2}])
+        self.assertEqual(trashed["entries"], [{field: moved.json()[field] for field in fields}])
         self.assertNotEqual(trashed["version"], original["version"])
         self.assertEqual({key: trashed[key] for key in ("version", "key_version")},
                          self.client.get(vault_path + "entries-version/").json())
@@ -159,6 +161,33 @@ class EncryptedVaultAPITests(TestCase):
         for changes in ({"auto_lock_seconds": 0}, {"auto_lock_seconds": True}, {"lock_on_hidden": "false"}, {"user": self.other.pk}):
             self.assertEqual(self.write("patch", "/api/security-settings/", changes).status_code, 400)
         self.assertFalse(SecuritySettings.objects.filter(user=self.other).exists())
+
+    def test_offset_pages_respect_ciphertext_budget_and_preserve_order(self):
+        # Three ~2.67 MiB encoded envelopes cannot share a 5 MiB page.
+        ciphertext = base64.b64encode(bytes(2 * 1024 * 1024)).decode()
+        created = [self.add(id=str(uuid.uuid4()), nonce=base64.b64encode(bytes([index]) * 12).decode(),
+                            ciphertext=ciphertext) for index in range(3)]
+        self.assertEqual([response.status_code for response in created], [201, 201, 201])
+        expected = [response.json()["id"] for response in reversed(created)]
+        seen = []
+        versions = set()
+        for offset in range(3):
+            response = self.client.get(self.path + f"?state=all&offset={offset}")
+            self.assertEqual(response.status_code, 200)
+            page = response.json()
+            self.assertEqual(page["count"], 3)
+            self.assertEqual(page["next_offset"], offset + 1 if offset < 2 else None)
+            self.assertEqual(len(page["results"]), 1)
+            self.assertLessEqual(sum(len(row["ciphertext"]) for row in page["results"]), 5 * 1024 * 1024)
+            seen.append(page["results"][0]["id"])
+            versions.add(page["version"])
+        self.assertEqual(seen, expected)
+        self.assertEqual(len(versions), 1)
+        for offset in ("-1", "1.5", "5000"):
+            self.assertEqual(self.client.get(self.path + f"?offset={offset}").status_code, 400)
+        self.assertEqual(self.client.get(self.path + "?offset=3").status_code, 409)
+        self.client.force_login(self.other, backend="django.contrib.auth.backends.ModelBackend")
+        self.assertEqual(self.client.get(self.path + "?offset=0").status_code, 404)
 
     def test_sensitive_api_responses_are_not_cacheable(self):
         for path in ("/api/vaults/", self.path, "/api/security-settings/"):
