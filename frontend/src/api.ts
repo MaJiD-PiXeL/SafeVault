@@ -49,14 +49,27 @@ export function createAccountApi(baseUrl = import.meta.env?.VITE_API_BASE_URL ??
     }
     if (body !== undefined) headers['Content-Type'] = 'application/json'
     const [route, query] = path.split('?')
+    const timeout = AbortSignal.timeout(timeoutMs)
+    const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
     const response = await fetch(`${base}/${namespace ? `${namespace}/` : ''}${route}/${query ? `?${query}` : ''}`, {
       method, credentials: 'include', cache: 'no-store', redirect: 'error', headers,
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+      signal: requestSignal,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
-    if (response.status === 204) return null
+    if (response.status === 204) {
+      requestSignal.throwIfAborted()
+      return null
+    }
     let data: unknown
-    try { data = await response.json() } catch { throw new ApiError('Unexpected server response.', response.status) }
+    try { data = await response.json() }
+    catch (error) {
+      signal?.throwIfAborted()
+      if (response.ok) {
+        requestSignal.throwIfAborted()
+        if (!(error instanceof SyntaxError)) throw error
+      }
+      throw new ApiError('Unexpected server response.', response.status)
+    }
     signal?.throwIfAborted()
     if (!response.ok) {
       if (isObject(data) && data.code === 'csrf_failed') csrfToken = null
@@ -70,6 +83,7 @@ export function createAccountApi(baseUrl = import.meta.env?.VITE_API_BASE_URL ??
       }
       throw new ApiError(message, response.status, isObject(data) && typeof data.code === 'string' ? data.code : undefined)
     }
+    requestSignal.throwIfAborted()
     return data
   }
 

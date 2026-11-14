@@ -1,0 +1,117 @@
+name: Verify SafeVault
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: CLI and Django with PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_PASSWORD: safevault-ci-only
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 4s
+          --health-retries 12
+    env:
+      PYTHON_DOTENV_DISABLED: '1'
+      DJANGO_SECRET_KEY: safevault-ci-only-django-key
+      DB_NAME: postgres
+      DB_USER: postgres
+      DB_PASSWORD: safevault-ci-only
+      DB_HOST: 127.0.0.1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip check
+      - run: python -m unittest discover -v
+      - name: Check migrations and test Django
+        env:
+          DB_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          python -B backend/manage.py makemigrations --check --dry-run --settings=config.postgres_test_settings
+          python -B backend/manage.py test accounts vault --settings=config.postgres_test_settings -v 2
+
+  frontend:
+    name: Frontend tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - run: npm run build
+
+  compose:
+    name: Compose HTTPS smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: safevault-ci-smoke
+      VAULT_HOST: safevault.localhost
+      VAULT_BIND_ADDRESS: 127.0.0.1
+      VAULT_FROM_EMAIL: no-reply@safevault.localhost
+      VAULT_SMTP_HOST: smtp.invalid
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Prepare temporary Compose credentials
+        run: |
+          install -d -m 0700 deploy/secrets
+          for secret in django-key postgres-admin-password database-password smtp-password; do
+            openssl rand -hex 32 > "deploy/secrets/$secret"
+            chmod 0444 "deploy/secrets/$secret"
+          done
+      - name: Build and start the stack
+        run: |
+          docker compose config --quiet
+          docker compose up --build --wait --wait-timeout 120
+      - name: Verify Caddy TLS, vault endpoints and sessions
+        run: |
+          certificate="$RUNNER_TEMP/safevault-root.crt"
+          for attempt in {1..10}; do
+            if docker compose cp edge:/data/caddy/pki/authorities/local/root.crt "$certificate"; then
+              break
+            fi
+            sleep 1
+          done
+          test -s "$certificate"
+          bash deploy/smoke-compose.sh "$certificate"
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color --tail 80
+      - name: Remove the test stack and database
+        if: always()
+        run: docker compose down --volumes

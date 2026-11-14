@@ -128,3 +128,32 @@ test('rejects invalid session list data and propagates cancellation', async (t) 
   controller.abort()
   await assert.rejects(createAccountApi().session(controller.signal), { name: 'AbortError' })
 })
+
+test('preserves response-body timeouts, disconnects and cancellations for offline handling', async (t) => {
+  const timeout = new AbortController()
+  const controller = new AbortController()
+  const disconnected = new TypeError('Connection closed during download')
+  t.mock.method(AbortSignal, 'timeout', () => timeout.signal)
+  const interruptedResponse = (status) => new Response(new ReadableStream({
+    start(stream) { stream.error(disconnected) },
+  }), { status })
+  const fetch = t.mock.method(globalThis, 'fetch', async () => interruptedResponse(200))
+  const api = createAccountApi()
+  const read = () => api.vaultRequest('vaults', 'GET', undefined, controller.signal)
+  await assert.rejects(read(), (error) => error === disconnected)
+  fetch.mock.mockImplementation(async () => interruptedResponse(403))
+  await assert.rejects(read(), { name: 'ApiError', status: 403 })
+
+  fetch.mock.mockImplementation(async (_, { signal }) => new Response(new ReadableStream({
+    start(stream) { signal.addEventListener('abort', () => stream.error(signal.reason), { once: true }) },
+  })))
+  const cancelled = read()
+  await Promise.resolve()
+  controller.abort()
+  await assert.rejects(cancelled, { name: 'AbortError' })
+
+  const timedOut = api.vaultRequest('vaults')
+  await Promise.resolve()
+  timeout.abort(new DOMException('Transfer timed out', 'TimeoutError'))
+  await assert.rejects(timedOut, { name: 'TimeoutError' })
+})

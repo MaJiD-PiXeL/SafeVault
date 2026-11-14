@@ -7,8 +7,8 @@ Manrope typography and obsidian/titanium/electric-blue palette. See
 storage remain compatible with existing data.
 
 The Python CLI manages encrypted passwords in MySQL. The React frontend is a
-sample vault interface; the Django backend exposes metadata, liveness,
-account authentication and session-management APIs.
+web vault with a sample preview for guests. The Django backend exposes metadata,
+liveness, account authentication and session-management APIs.
 Phase 1 adds encrypted-storage models and owner-scoped persistence services;
 Phase 2 connects account sign-up/sign-in and session revocation to the frontend.
 Phase 3 adds client Argon2id/AES-GCM, authenticated encrypted-vault CRUD, local
@@ -57,7 +57,7 @@ backend/.venv/Scripts/python.exe -B backend/manage.py check
 backend/.venv/Scripts/python.exe -B backend/manage.py test accounts vault --settings=config.test_settings -v 2
 ```
 
-The SQLite in-memory suite skips the six PostgreSQL concurrency tests.
+The SQLite in-memory suite skips PostgreSQL concurrency tests.
 To run all backend tests on PostgreSQL, use the explicit integration settings:
 
 ```powershell
@@ -75,6 +75,10 @@ npm test
 npm run build
 npm run lint
 ```
+
+[GitHub Actions](.github/workflows/verify.yml) runs the CLI suite, the Django
+suite with a fresh PostgreSQL service and the frontend tests, lint and build
+on pull requests and pushes to `main`.
 
 The default tests use mocked CLI connections and isolated Django settings. They
 do not write to the real vault. To opt into the read-only MySQL connectivity test,
