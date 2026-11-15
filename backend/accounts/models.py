@@ -3,6 +3,7 @@ import uuid
 from django.conf import settings
 from django.contrib.sessions.models import Session
 from django.db import models
+from django.utils import timezone
 
 
 class AccountSession(models.Model):
@@ -29,3 +30,4 @@ class RecoveryEmail(models.Model):
 class PasswordResetRequest(models.Model):
     username = models.CharField(max_length=50, unique=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    next_attempt_at = models.DateTimeField(default=timezone.now, db_index=True)

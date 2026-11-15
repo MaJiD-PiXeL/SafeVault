@@ -1,6 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from threading import Barrier
+from threading import Barrier, Event
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
@@ -15,7 +15,7 @@ from django.utils import timezone
 from vault.models import Vault
 
 from .models import AccountSession, PasswordResetRequest, RecoveryEmail
-from .recovery import (InvalidRecoveryLink, dispatch_reset_requests, reset_account_password,
+from .recovery import (RESET_DELIVERY_RETRY_DELAY, InvalidRecoveryLink, dispatch_reset_requests, reset_account_password,
                        reset_tokens, verification_tokens)
 
 
@@ -142,6 +142,23 @@ class AccountRecoveryTests(TestCase):
         self.assertEqual(dispatch_reset_requests(), (0, 0))
         self.assertFalse(PasswordResetRequest.objects.exists())
 
+    def test_failed_delivery_waits_before_retry_and_success_removes_the_request(self):
+        self.confirmed_address()
+        response = post(self.guest, BASE + "request/", {"username": self.owner.username})
+        self.assertEqual(response.status_code, 202)
+        now = timezone.now()
+        with patch("accounts.recovery.timezone.now", return_value=now), \
+                patch("accounts.recovery.send_mail", side_effect=OSError("SMTP unavailable")) as send:
+            self.assertEqual(dispatch_reset_requests(), (0, 1))
+            self.assertEqual(dispatch_reset_requests(), (0, 0))
+        self.assertEqual(send.call_count, 1)
+        self.assertEqual(PasswordResetRequest.objects.get().next_attempt_at, now + RESET_DELIVERY_RETRY_DELAY)
+
+        with patch("accounts.recovery.timezone.now", return_value=now + RESET_DELIVERY_RETRY_DELAY):
+            self.assertEqual(dispatch_reset_requests(), (1, 0))
+        emailed_link("reset", self.owner.username)
+        self.assertFalse(PasswordResetRequest.objects.exists())
+
     def test_per_username_budget_suppresses_extra_email_without_changing_response(self):
         self.confirmed_address()
         for index in range(4):
@@ -159,6 +176,37 @@ class AccountRecoveryTests(TestCase):
 
 @override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
 class ConcurrentPasswordResetTests(TransactionTestCase):
+    @skipUnlessDBFeature("has_select_for_update")
+    def test_another_worker_skips_a_request_during_smtp_delivery(self):
+        owner = get_user_model().objects.create_user(username="delivery-race", password=PASSWORD)
+        RecoveryEmail.objects.create(user=owner, email=EMAIL, verified_at=timezone.now())
+        PasswordResetRequest.objects.create(username=owner.username)
+        started = Event()
+        release = Event()
+
+        def send(*args, **kwargs):
+            started.set()
+            self.assertTrue(release.wait(timeout=10))
+            return 1
+
+        def dispatch():
+            try:
+                return dispatch_reset_requests()
+            finally:
+                connections.close_all()
+
+        with patch("accounts.recovery.link_origin", return_value="https://vault.example.test"), \
+                patch("accounts.recovery.send_mail", side_effect=send) as mailer, ThreadPoolExecutor() as workers:
+            first = workers.submit(dispatch)
+            try:
+                self.assertTrue(started.wait(timeout=10))
+                self.assertEqual(dispatch_reset_requests(), (0, 0))
+            finally:
+                release.set()
+            self.assertEqual(first.result(timeout=10), (1, 0))
+        self.assertEqual(mailer.call_count, 1)
+        self.assertFalse(PasswordResetRequest.objects.exists())
+
     @skipUnlessDBFeature("has_select_for_update")
     def test_concurrent_redemptions_of_one_link_only_change_password_once(self):
         owner = get_user_model().objects.create_user(username="recovery-race", password=PASSWORD)

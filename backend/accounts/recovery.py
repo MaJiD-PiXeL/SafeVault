@@ -46,6 +46,8 @@ class VerificationTokenGenerator(RecoveryTokenGenerator):
 
 reset_tokens = RecoveryTokenGenerator()
 verification_tokens = VerificationTokenGenerator()
+RESET_REQUEST_MAX_AGE = timedelta(minutes=15)
+RESET_DELIVERY_RETRY_DELAY = timedelta(minutes=2)
 
 
 def link_origin():
@@ -138,23 +140,28 @@ def reset_account_password(*, username, token, password):
 
 
 def dispatch_reset_requests(limit=20):
-    cutoff = timezone.now() - timedelta(minutes=15)
-    PasswordResetRequest.objects.filter(created_at__lte=cutoff).delete()
-    jobs = list(PasswordResetRequest.objects.order_by("created_at", "pk")[:limit])
+    now = timezone.now()
+    PasswordResetRequest.objects.filter(created_at__lte=now - RESET_REQUEST_MAX_AGE).delete()
+    jobs = list(PasswordResetRequest.objects.filter(next_attempt_at__lte=now).order_by("created_at", "pk")[:limit])
     sent = failed = 0
     for job in jobs:
-        claimed, _ = PasswordResetRequest.objects.filter(pk=job.pk).delete()
-        if not claimed:
-            continue
+        # A reset racing this attempt either removes the job or invalidates the token's password hash.
         user = get_user_model().objects.select_related("recovery_email").filter(
             username=job.username, is_active=True, recovery_email__verified_at__isnull=False,
         ).first()
-        if user is None or not user.has_usable_password():
+        now = timezone.now()
+        retry_at = now + RESET_DELIVERY_RETRY_DELAY
+        queued = PasswordResetRequest.objects.filter(pk=job.pk)
+        # Claim with one update and release the database before talking to SMTP.
+        if not queued.filter(next_attempt_at=job.next_attempt_at,
+                             created_at__gt=now - RESET_REQUEST_MAX_AGE).update(next_attempt_at=retry_at):
             continue
-        try:
-            send_recovery_link(user, verify=False)
-        except EmailDeliveryError:
-            failed += 1
-        else:
+        if user is not None and user.has_usable_password():
+            try:
+                send_recovery_link(user, verify=False)
+            except EmailDeliveryError:
+                failed += 1
+                continue
             sent += 1
+        queued.filter(next_attempt_at=retry_at).delete()
     return sent, failed

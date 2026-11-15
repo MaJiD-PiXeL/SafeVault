@@ -72,15 +72,18 @@ jobs:
       - run: npm run build
 
   compose:
-    name: Compose HTTPS smoke test
+    name: Compose HTTPS and account recovery
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       COMPOSE_PROJECT_NAME: safevault-ci-smoke
+      COMPOSE_FILE: compose.yaml:deploy/compose.ci.yaml
       VAULT_HOST: safevault.localhost
       VAULT_BIND_ADDRESS: 127.0.0.1
       VAULT_FROM_EMAIL: no-reply@safevault.localhost
-      VAULT_SMTP_HOST: smtp.invalid
+      VAULT_SMTP_HOST: mailpit
+      VAULT_SMTP_PORT: '1025'
+      VAULT_SMTP_USERNAME: smoke
     steps:
       - uses: actions/checkout@v7
         with:
@@ -92,11 +95,16 @@ jobs:
             openssl rand -hex 32 > "deploy/secrets/$secret"
             chmod 0444 "deploy/secrets/$secret"
           done
+          printf 'smoke:%s\n' "$(cat deploy/secrets/smtp-password)" > deploy/secrets/smoke-smtp-auth
+          openssl req -new -x509 -newkey rsa:2048 -noenc -days 1 \
+            -subj /CN=mailpit -addext subjectAltName=DNS:mailpit \
+            -keyout deploy/secrets/smoke-smtp.key -out deploy/secrets/smoke-smtp.crt
+          chmod 0444 deploy/secrets/smoke-smtp.{crt,key} deploy/secrets/smoke-smtp-auth
       - name: Build and start the stack
         run: |
           docker compose config --quiet
           docker compose up --build --wait --wait-timeout 120
-      - name: Verify Caddy TLS, vault endpoints and sessions
+      - name: Verify Caddy TLS, vault endpoints and account recovery
         run: |
           certificate="$RUNNER_TEMP/safevault-root.crt"
           for attempt in {1..10}; do
@@ -106,7 +114,7 @@ jobs:
             sleep 1
           done
           test -s "$certificate"
-          bash deploy/smoke-compose.sh "$certificate"
+          bash deploy/smoke-compose.sh "$certificate" --recovery
       - name: Collect diagnostics
         if: failure()
         run: |

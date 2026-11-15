@@ -124,9 +124,12 @@ backend/.venv/Scripts/python.exe -B backend/manage.py dispatch_account_recovery
 
 Each invocation processes up to 20 queued requests and discards requests older
 than 15 minutes. It reports counts and exits with an error on delivery failure.
-A failed delivery can be requested again within the request budget. For
-development, the console mailer prints links for synthetic accounts. Keep the
-worker's output and email contents private.
+Apply `accounts.0003` before starting the updated worker. It retries failed
+deliveries after two minutes while the request is still in the queue. If an
+SMTP acknowledgment is lost, a retry can deliver a second reset email.
+Completing a reset invalidates both links. For development, the console mailer
+prints links for synthetic accounts. Keep the worker's output and email contents
+private.
 
 The recovery design uses Django's token generator and the OWASP guidance on
 single-use tokens, uniform responses and session invalidation.

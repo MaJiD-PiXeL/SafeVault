@@ -1,0 +1,30 @@
+x-mail-client: &mail-client
+  environment:
+    SSL_CERT_FILE: /run/secrets/smoke-smtp-cert
+  volumes:
+    - ./deploy/secrets/smoke-smtp.crt:/run/secrets/smoke-smtp-cert:ro
+
+services:
+  api:
+    <<: *mail-client
+
+  worker:
+    <<: *mail-client
+
+  mailpit:
+    image: ghcr.io/axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
+    environment:
+      MP_SMTP_TLS_CERT: /run/secrets/smoke-smtp-cert
+      MP_SMTP_TLS_KEY: /run/secrets/smoke-smtp-key
+      MP_SMTP_AUTH_FILE: /run/secrets/smoke-smtp-auth
+      MP_SMTP_REQUIRE_STARTTLS: 'true'
+      MP_SMTP_ALLOWED_RECIPIENTS: '^recovery@example\.test$'
+      MP_SMTP_DISABLE_RDNS: 'true'
+      MP_DISABLE_VERSION_CHECK: 'true'
+    volumes:
+      - ./deploy/secrets/smoke-smtp.crt:/run/secrets/smoke-smtp-cert:ro
+      - ./deploy/secrets/smoke-smtp.key:/run/secrets/smoke-smtp-key:ro
+      - ./deploy/secrets/smoke-smtp-auth:/run/secrets/smoke-smtp-auth:ro
+    ports:
+      - '127.0.0.1:8025:8025'
+    networks: [outbound]
