@@ -115,6 +115,35 @@ jobs:
           done
           test -s "$certificate"
           bash deploy/smoke-compose.sh "$certificate" --recovery
+      - name: Restore the PostgreSQL backup into a separate database
+        shell: bash
+        run: |
+          umask 077
+          archive="$RUNNER_TEMP/safevault-smoke.dump"
+          docker compose exec -T db pg_dump --username=safevault --format=custom --dbname=safevault > "$archive"
+          docker compose exec -T db createdb --username=postgres --template=template0 --owner=safevault safevault_restore_smoke
+          docker compose exec -T db pg_restore --username=safevault --single-transaction \
+            --no-owner --no-privileges --dbname=safevault_restore_smoke < "$archive"
+
+          fixture=frontend/tests/fixtures/encryption-v1.json
+          entry_id=$(jq -er '.entry.id' "$fixture")
+          nonce=$(jq -er '.entry.nonce' "$fixture")
+          ciphertext=$(jq -er '.entry.ciphertext' "$fixture")
+          restored=$(docker compose exec -T db psql --no-psqlrc --username=safevault \
+            --dbname=safevault_restore_smoke --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+            --set=entry_id="$entry_id" --set=nonce="$nonce" --set=ciphertext="$ciphertext" <<'SQL'
+          SELECT EXISTS (
+              SELECT 1 FROM vault_vaultentry AS entry
+              JOIN vault_vault AS vault ON vault.id = entry.vault_id
+              JOIN auth_user AS owner ON owner.id = vault.owner_id
+              JOIN accounts_recoveryemail AS recovery ON recovery.user_id = owner.id
+              WHERE owner.username = 'composesmoke' AND recovery.verified_at IS NOT NULL
+                AND entry.id = :'entry_id' AND entry.nonce = :'nonce'
+                AND entry.ciphertext = :'ciphertext' AND entry.revision = 1
+          );
+          SQL
+          )
+          test "$restored" = t
       - name: Collect diagnostics
         if: failure()
         run: |

@@ -69,10 +69,9 @@ requests and prunes expired authentication state hourly.
 
 On the actual HTTPS origin, use synthetic entries to verify sign-in, account
 email delivery and reset, vault unlock, Trash and backup restore. Confirm that
-the API sends `Cache-Control: no-store` and session cookies are secure. Plan
-periodic PostgreSQL backups to protected storage and rehearse restoring one to
-a separate database. The in-app encrypted export covers a user's active vault
-entries. A PostgreSQL backup also captures account and operational state.
+the API sends `Cache-Control: no-store` and session cookies are secure. Use the
+[database backup and restore procedure](#database-backup-and-restore) to rehearse
+recovery before relying on a backup.
 
 Host deployment, public TLS issuance and SMTP delivery require validation in
 the target environment. Schedule an independent security review before public
@@ -81,6 +80,59 @@ use with real passwords.
 Local checks cover the Caddy configuration, Django production settings,
 database readiness and a two-session rehearsal against a disposable database.
 Run the complete Compose startup and HTTPS smoke test on the Linux host.
+
+## Database backup and restore
+
+The PostgreSQL archive includes account records, email addresses, authentication
+state and the encrypted vault tables, including Trash. Store the archive in an
+access-controlled, encrypted backup location. The in-app encrypted export is a
+separate backup for an individual user's active entries.
+
+From the source checkout, set `BACKUP_DIR` to an existing protected directory.
+The custom-format dump can run while the stack is serving requests.
+
+```bash
+umask 077
+archive=$(mktemp "${BACKUP_DIR:?Set BACKUP_DIR}/safevault.XXXXXXXX.dump") || exit 1
+if ! docker compose --env-file deploy/.env exec -T db \
+  pg_dump --username=safevault --format=custom --dbname=safevault > "$archive"; then
+  rm -f -- "$archive"
+  exit 1
+fi
+(cd "$BACKUP_DIR" && sha256sum "$(basename "$archive")") > "$archive.sha256"
+```
+
+Rehearse from a separate checkout with fresh deployment secrets and a new
+Compose project name. Copy the trusted archive and checksum to protected storage
+there. Set `archive` to the archive's absolute path. Start only PostgreSQL so
+its initializer creates the `safevault` role and an empty database. Use a
+PostgreSQL version at least as recent as the source and compatible with the
+deployment.
+
+```bash
+(cd "$(dirname "$archive")" && sha256sum --check "$(basename "$archive").sha256") &&
+docker compose --project-name safevault-restore --env-file deploy/.env up --wait db &&
+docker compose --project-name safevault-restore --env-file deploy/.env exec -T db \
+  pg_restore --username=safevault --single-transaction --no-owner --no-privileges \
+  --dbname=safevault < "$archive" &&
+docker compose --project-name safevault-restore --env-file deploy/.env \
+  run --build --rm --no-deps migrate
+```
+
+Verify the restored accounts and vault access in the isolated environment with
+test data you control. Before bringing a restored database into service, use a
+fresh Django secret to invalidate old sessions and recovery links, and clear
+the restored password-reset queue before starting the mail worker. Run this
+command only from the restore checkout against the recovered database.
+
+```bash
+docker compose --project-name safevault-restore --env-file deploy/.env \
+  run --rm --no-deps migrate python manage.py shell --command \
+  'from accounts.models import PasswordResetRequest; PasswordResetRequest.objects.all().delete()'
+```
+
+Use the original vault master password or active recovery key for that snapshot.
+[PostgreSQL dump and restore](https://www.postgresql.org/docs/17/backup-dump.html)
 
 ## Automated Compose smoke test
 
@@ -95,8 +147,10 @@ STARTTLS and a temporary certificate. The smoke test consumes the verification
 email from the API and the reset email from the worker, then checks session
 revocation, sign-in with the replacement password and preservation of the
 encrypted entry. Mailpit captures the synthetic messages locally. The workflow
-removes its Compose volumes after the run. Verify the real SMTP provider and
-public certificates on the target host.
+then dumps PostgreSQL and restores it into a second database, where it checks
+the verified recovery address and the original encrypted entry. It removes its
+Compose volumes after the run. Verify the real SMTP provider and public
+certificates on the target host.
 
 [Docker startup ordering](https://docs.docker.com/compose/how-tos/startup-order/) ·
 [Caddy HTTPS](https://caddyserver.com/docs/automatic-https) ·
