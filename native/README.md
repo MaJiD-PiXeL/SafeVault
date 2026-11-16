@@ -5,7 +5,9 @@ browser vault and its encryption. For release builds, use the HTTPS hostname of
 the same-origin SafeVault deployment.
 
 The [mobile build workflow](../.github/workflows/build-mobile.yml) takes a
-hostname and produces an Android debug APK and an iOS Simulator bundle.
+hostname and produces an Android debug APK with its `assetlinks.json` file and
+an iOS Simulator bundle. Pull requests that change either mobile project run
+the builds with a placeholder hostname.
 
 ## Windows x64
 
@@ -35,13 +37,18 @@ gradle -PsafevaultHost=vault.example.com assembleDebug
 gradle -PsafevaultHost=vault.example.com bundleRelease
 ```
 
-Sign the release bundle with the Android distribution key. At
-`https://<hostname>/.well-known/assetlinks.json`, publish the Digital Asset Links
-association for `com.nexora.safevault` and the SHA-256 fingerprint of the
-certificate that signs the installed package. Use the debug certificate when
-testing the debug APK, or the Play app-signing certificate for Play builds.
-Check that the installed app opens in the verified fullscreen activity and
-exercise sign-in, locking, file import and backup export on a device.
+For a beta build from the workflow, download the `SafeVault-Android-debug`
+artifact. Deploy its `assetlinks.json` using the
+[Compose instructions](../docs/compose-deployment.md#android-domain-verification)
+and install the APK from the same artifact. GitHub runners can generate a new
+debug signing key on each run. Use the matching file and reinstall the app if
+its signing certificate changes.
+
+Sign the release bundle with your Android distribution key. For Play builds,
+publish the Digital Asset Links association for `com.nexora.safevault` with the
+Play app-signing certificate's SHA-256 fingerprint. Check that the installed
+app opens fullscreen and test sign-in, locking, file import and backup export
+on a device.
 [Trusted Web Activity setup](https://developer.chrome.com/docs/android/trusted-web-activity/quick-start/)
 
 ## iOS and iPadOS

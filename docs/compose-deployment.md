@@ -81,6 +81,18 @@ Local checks cover the Caddy configuration, Django production settings,
 database readiness and a two-session rehearsal against a disposable database.
 Run the complete Compose startup and HTTPS smoke test on the Linux host.
 
+## Android domain verification
+
+Create `deploy/android/` on the Compose host and place the Android build's
+`assetlinks.json` in it. The edge service mounts this directory read-only and
+serves the file at `https://<hostname>/.well-known/assetlinks.json`. Keep the
+directory and file readable by Caddy. You can replace the file without rebuilding
+the image. Confirm that an HTTPS request returns `200` and `application/json`.
+
+Use the association file from the same debug build as the APK. For distribution
+through Google Play, use the fingerprint from Play Console for the certificate
+that signs the installed app. [Configure Android App Links](https://developer.android.com/training/app-links/configure-assetlinks)
+
 ## Database backup and restore
 
 The PostgreSQL archive includes account records, email addresses, authentication

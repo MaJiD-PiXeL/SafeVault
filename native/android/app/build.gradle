@@ -18,6 +18,11 @@ android {
         versionCode 1
         versionName '0.1.0'
         manifestPlaceholders = [vaultHost: host, vaultUrl: "https://${host}/"]
+        def association = groovy.json.JsonOutput.toJson([[
+            relation: ['delegate_permission/common.handle_all_urls'],
+            target: [namespace: 'web', site: "https://${host}/"],
+        ]])
+        resValue 'string', 'asset_statements', association.replace('"', '\\"')
     }
 }
 

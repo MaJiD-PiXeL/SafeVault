@@ -1,6 +1,11 @@
 name: Build SafeVault mobile apps
 
 on:
+  pull_request:
+    paths:
+      - 'native/android/**'
+      - 'native/ios/**'
+      - '.github/workflows/build-mobile.yml'
   workflow_dispatch:
     inputs:
       hostname:
@@ -12,7 +17,7 @@ permissions:
   contents: read
 
 env:
-  SAFEVAULT_HOST: ${{ inputs.hostname }}
+  SAFEVAULT_HOST: ${{ inputs.hostname || 'vault.example.com' }}
 
 jobs:
   android:
@@ -32,10 +37,32 @@ jobs:
       - run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
       - working-directory: native/android
         run: gradle --no-daemon "-PsafevaultHost=$SAFEVAULT_HOST" assembleDebug
+      - name: Package the APK and matching Android association
+        shell: bash
+        run: |
+          apk=native/android/app/build/outputs/apk/debug/app-debug.apk
+          tools="$ANDROID_HOME/build-tools/35.0.0"
+          package=$("$tools/aapt2" dump packagename "$apk")
+          test -n "$package"
+          digest=$("$tools/apksigner" verify --print-certs "$apk" |
+            sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          if [[ ! "$digest" =~ ^[[:xdigit:]]{64}$ ]]; then
+            echo 'Could not read the SHA-256 fingerprint of the debug APK signer.' >&2
+            exit 1
+          fi
+          fingerprint=$(sed 's/../&:/g; s/:$//' <<< "${digest^^}")
+          output="$RUNNER_TEMP/SafeVault-Android-debug"
+          mkdir -p "$output"
+          cp "$apk" "$output/SafeVault-Android-debug.apk"
+          jq -n --arg package "$package" --arg fingerprint "$fingerprint" '[{
+            relation: ["delegate_permission/common.handle_all_urls"],
+            target: {namespace: "android_app", package_name: $package, sha256_cert_fingerprints: [$fingerprint]}
+          }]' > "$output/assetlinks.json"
       - uses: actions/upload-artifact@v7
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: SafeVault-Android-debug
-          path: native/android/app/build/outputs/apk/debug/*.apk
+          path: ${{ runner.temp }}/SafeVault-Android-debug/
           if-no-files-found: error
 
   ios:
@@ -57,8 +84,13 @@ jobs:
           xcodebuild -project SafeVault.xcodeproj -scheme SafeVault \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
             "SAFEVAULT_HOST=$SAFEVAULT_HOST" CODE_SIGNING_ALLOWED=NO build
+      - name: Archive the iOS Simulator app
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: native/ios
+        run: |
           ditto -c -k --keepParent build/Build/Products/Debug-iphonesimulator/SafeVault.app "$RUNNER_TEMP/SafeVault-iOS-Simulator.zip"
       - uses: actions/upload-artifact@v7
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: SafeVault-iOS-Simulator
           path: ${{ runner.temp }}/SafeVault-iOS-Simulator.zip

@@ -102,6 +102,7 @@ jobs:
           chmod 0444 deploy/secrets/smoke-smtp.{crt,key} deploy/secrets/smoke-smtp-auth
       - name: Build and start the stack
         run: |
+          install -d -m 0755 deploy/android
           docker compose config --quiet
           docker compose up --build --wait --wait-timeout 120
       - name: Verify Caddy TLS, vault endpoints and account recovery
@@ -115,6 +116,23 @@ jobs:
           done
           test -s "$certificate"
           bash deploy/smoke-compose.sh "$certificate" --recovery
+      - name: Verify Android association over HTTPS
+        shell: bash
+        run: |
+          url="https://$VAULT_HOST/.well-known/assetlinks.json"
+          request=(curl --silent --show-error --max-time 10 --noproxy '*'
+            --resolve "$VAULT_HOST:443:127.0.0.1" --cacert "$RUNNER_TEMP/safevault-root.crt")
+          status=$("${request[@]}" --output /dev/null --write-out '%{http_code}' "$url")
+          test "$status" = 404
+
+          fingerprint=$(openssl rand -hex 32 | tr '[:lower:]' '[:upper:]' | sed 's/../&:/g; s/:$//')
+          jq -n --arg fingerprint "$fingerprint" '[{
+            relation: ["delegate_permission/common.handle_all_urls"],
+            target: {namespace: "android_app", package_name: "com.nexora.safevault", sha256_cert_fingerprints: [$fingerprint]}
+          }]' > deploy/android/assetlinks.json
+          "${request[@]}" --fail --output "$RUNNER_TEMP/assetlinks.json" \
+            --write-out '%{http_code} %{content_type}\n' "$url" | grep -Eq '^200 application/json(;|$)'
+          cmp deploy/android/assetlinks.json "$RUNNER_TEMP/assetlinks.json"
       - name: Restore the PostgreSQL backup into a separate database
         shell: bash
         run: |

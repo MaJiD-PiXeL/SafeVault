@@ -91,6 +91,7 @@ services:
       - "${VAULT_BIND_ADDRESS:-127.0.0.1}:443:443"
     volumes:
       - api-socket:/run/safevault:ro
+      - ./deploy/android:/srv/android:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
