@@ -127,6 +127,8 @@ the entry list supports sorting and clearing filters. See
 [production configuration checks](docs/deployment-checks.md).
 For a hosted beta, use the [Linux Compose deployment guide](docs/compose-deployment.md).
 For local testing, use the [isolated beta launcher](docs/local-beta.md).
+For the Windows, Android and iOS client projects, see the
+[app build instructions](native/README.md).
 
 **Secure Notes** and **Payment Cards** store encrypted notes, cardholder names,
 card numbers and expiry dates. Unlocked vaults refresh changes from other

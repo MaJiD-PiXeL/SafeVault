@@ -1,0 +1,26 @@
+plugins {
+    id 'com.android.application' version '8.13.2'
+}
+
+def host = providers.gradleProperty('safevaultHost').orNull
+if (!(host ==~ /[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+/)) {
+    throw new GradleException('Set -PsafevaultHost to the deployed SafeVault HTTPS hostname.')
+}
+
+android {
+    namespace 'com.nexora.safevault'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.nexora.safevault'
+        minSdk 23
+        targetSdk 36
+        versionCode 1
+        versionName '0.1.0'
+        manifestPlaceholders = [vaultHost: host, vaultUrl: "https://${host}/"]
+    }
+}
+
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.7.2'
+}

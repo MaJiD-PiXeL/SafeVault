@@ -1,0 +1,65 @@
+name: Build SafeVault mobile apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      hostname:
+        description: SafeVault deployment hostname without scheme or path
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  SAFEVAULT_HOST: ${{ inputs.hostname }}
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.13'
+      - run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+      - working-directory: native/android
+        run: gradle --no-daemon "-PsafevaultHost=$SAFEVAULT_HOST" assembleDebug
+      - uses: actions/upload-artifact@v7
+        with:
+          name: SafeVault-Android-debug
+          path: native/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: brew install xcodegen
+      - working-directory: native/ios
+        shell: bash
+        run: |
+          if [[ ! "$SAFEVAULT_HOST" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]; then
+            echo 'Enter the deployed SafeVault HTTPS hostname without the scheme or path.' >&2
+            exit 1
+          fi
+          xcodegen generate
+          xcodebuild -project SafeVault.xcodeproj -scheme SafeVault \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
+            "SAFEVAULT_HOST=$SAFEVAULT_HOST" CODE_SIGNING_ALLOWED=NO build
+          ditto -c -k --keepParent build/Build/Products/Debug-iphonesimulator/SafeVault.app "$RUNNER_TEMP/SafeVault-iOS-Simulator.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: SafeVault-iOS-Simulator
+          path: ${{ runner.temp }}/SafeVault-iOS-Simulator.zip
+          if-no-files-found: error

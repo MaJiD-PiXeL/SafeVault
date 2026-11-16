@@ -11,4 +11,10 @@ node_modules/
 dist/
 *.tsbuildinfo
 deploy/secrets/
+native/android/.gradle/
+native/android/app/build/
+native/android/local.properties
+native/ios/build/
+native/ios/SafeVault.xcodeproj/
+native/ios/GeneratedInfo.plist
 

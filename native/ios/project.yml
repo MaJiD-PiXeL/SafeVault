@@ -1,0 +1,21 @@
+name: SafeVault
+options:
+  deploymentTarget:
+    iOS: '16.0'
+targets:
+  SafeVault:
+    type: application
+    platform: iOS
+    sources: [SafeVault.swift]
+    info:
+      path: GeneratedInfo.plist
+      properties:
+        CFBundleDisplayName: SafeVault
+        CFBundleShortVersionString: '0.1.0'
+        CFBundleVersion: '1'
+        UILaunchScreen: {}
+        SafeVaultHost: '$(SAFEVAULT_HOST)'
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.nexora.safevault
+      SWIFT_VERSION: '5.0'
+      TARGETED_DEVICE_FAMILY: '1,2'
