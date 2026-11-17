@@ -12,7 +12,9 @@ $output = Join-Path $PSScriptRoot 'dist'
 New-Item -Path $output -ItemType Directory -Force | Out-Null
 $core = Join-Path $library 'Microsoft.Web.WebView2.Core.dll'
 $winForms = Join-Path $library 'Microsoft.Web.WebView2.WinForms.dll'
+$icon = Join-Path $PSScriptRoot 'SafeVault.ico'
 $arguments = @('/nologo', '/target:winexe', '/platform:x64', '/optimize+',
+    "/win32icon:$icon",
     "/out:$output/SafeVault.exe", "/reference:$core", "/reference:$winForms",
     '/reference:System.Drawing.dll', '/reference:System.Windows.Forms.dll', (Join-Path $PSScriptRoot 'SafeVault.cs'))
 & $compiler @arguments

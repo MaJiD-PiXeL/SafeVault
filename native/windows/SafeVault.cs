@@ -38,6 +38,7 @@ internal sealed class VaultWindow : Form
     {
         this.origin = origin;
         Text = "SafeVault — Connecting";
+        Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(1100, 760);
         MinimumSize = new Size(400, 480);

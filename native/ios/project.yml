@@ -6,7 +6,9 @@ targets:
   SafeVault:
     type: application
     platform: iOS
-    sources: [SafeVault.swift]
+    sources:
+      - SafeVault.swift
+      - Assets.xcassets
     info:
       path: GeneratedInfo.plist
       properties:
@@ -16,6 +18,7 @@ targets:
         UILaunchScreen: {}
         SafeVaultHost: '$(SAFEVAULT_HOST)'
     settings:
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       PRODUCT_BUNDLE_IDENTIFIER: com.nexora.safevault
       SWIFT_VERSION: '5.0'
       TARGETED_DEVICE_FAMILY: '1,2'
