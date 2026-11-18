@@ -4,6 +4,7 @@ import { LogOut, ShieldCheck } from 'lucide-react'
 import { accountApi, accountError } from './api'
 import type { AccountUser, DeviceSession } from './api'
 import { ForgotAccountPassword, RecoveryEmailSettings } from './AccountRecovery'
+import SecondFactorPanel from './SecondFactorPanel'
 
 type Props = {
   user: AccountUser | null
@@ -18,6 +19,7 @@ export default function AccountPanel({ user, status, onUserChange, onRefresh, on
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
+  const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [sessionData, setSessionData] = useState<{ ownerId: number; items: DeviceSession[] } | null>(null)
@@ -42,11 +44,11 @@ export default function AccountPanel({ user, status, onUserChange, onRefresh, on
     try {
       const session = mode === 'register'
         ? await accountApi.register(username, password)
-        : await accountApi.signIn(username, password)
+        : await accountApi.signIn(username, password, code)
       setUsername('')
       onUserChange(session.user)
     } catch (reason) { setError(accountError(reason)) }
-    finally { setPassword(''); setConfirmation(''); setBusy(false) }
+    finally { setPassword(''); setConfirmation(''); setCode(''); setBusy(false) }
   }
 
   async function signOut() {
@@ -82,6 +84,7 @@ export default function AccountPanel({ user, status, onUserChange, onRefresh, on
           <button disabled={busy} onClick={() => void signOut()} className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-sm text-slate-300 disabled:opacity-50"><LogOut size={15} />Sign out</button>
         </div>
         <RecoveryEmailSettings />
+        <SecondFactorPanel key={user.id} />
         <h3 className="mt-8 border-t border-white/10 pt-6 text-sm font-semibold">Active browser sessions</h3>
         <p className="mt-2 text-xs leading-6 text-slate-400">Sessions expire after 30 minutes. You can end access from another browser here.</p>
         {sessionsLoading && <p role="status" className="mt-4 text-sm text-slate-400">Loading sessions...</p>}
@@ -106,6 +109,9 @@ export default function AccountPanel({ user, status, onUserChange, onRefresh, on
           </label>
           {mode === 'register' && <label className="block text-xs text-slate-300">Confirm account password
             <input required type="password" name="confirmation" autoComplete="new-password" maxLength={1024} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} className="mt-2 block w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm outline-none focus:border-blue-400" />
+          </label>}
+          {mode === 'login' && <label className="block text-xs text-slate-300">Authenticator or recovery code (if enabled)
+            <input name="code" autoComplete="one-time-code" maxLength={64} value={code} onChange={event => setCode(event.target.value)} className="mt-2 block w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm outline-none focus:border-blue-400" />
           </label>}
           <p className="text-xs leading-6 text-slate-500">{mode === 'register' ? 'Use at least 12 characters and a password different from your vault master password. ' : ''}This form sends your account password to the account service.</p>
           <button disabled={busy || status !== 'ready'} className="w-full rounded-xl brand-primary px-5 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Please wait...' : mode === 'register' ? 'Create account' : 'Sign in'}</button>

@@ -30,9 +30,19 @@ class RegistrationSerializer(AccountCredentials):
         return data
 
 
-class RecoveryEmailSerializer(StrictAccountFields):
-    email = serializers.EmailField(max_length=254)
+class LoginCredentials(AccountCredentials):
+    code = serializers.CharField(max_length=64, required=False, default="", allow_blank=True,
+                                 trim_whitespace=False, write_only=True)
+
+
+class RecoveryEmailCredentials(StrictAccountFields):
     password = serializers.CharField(max_length=1024, trim_whitespace=False, write_only=True)
+    code = serializers.CharField(max_length=64, required=False, default="", allow_blank=True,
+                                 trim_whitespace=False, write_only=True)
+
+
+class RecoveryEmailSerializer(RecoveryEmailCredentials):
+    email = serializers.EmailField(max_length=254)
 
 
 class RecoveryRequestSerializer(StrictAccountFields):

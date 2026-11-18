@@ -199,16 +199,18 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
       }
       return { envelopes, entriesVersion: version }
     },
-    async entries(id: string, signal: AbortSignal, onVersion?: (version: string) => void, expectedKeyVersion = 1): Promise<EncryptedEntry[]> {
+    async entries(id: string, signal: AbortSignal, onVersion?: (version: string) => void, expectedKeyVersion = 1,
+      onBatch?: (entries: EncryptedEntry[]) => Promise<void>): Promise<EncryptedEntry[]> {
       const entries: EncryptedEntry[] = []
       const seen = new Set<string>()
       let count = -1
       let totalBytes = 0
       let version: string | null = null
       let bounded = true
+      let received = 0
       const path = vaultPath(id)
       for (let page = 1; page <= MAX_VAULT_ENTRIES; page += 1) {
-        const position = bounded ? `offset=${entries.length}` : `page=${page}`
+        const position = bounded ? `offset=${received}` : `page=${page}`
         const data = await request(`${path}?state=all&${position}`, 'GET', undefined, signal, 60000)
         signal.throwIfAborted()
         if (!object(data) || typeof data.count !== 'number' || !Number.isSafeInteger(data.count) || data.count < 0 ||
@@ -225,7 +227,7 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
         if (bounded && version === null) throw new VaultDataError('Missing vault snapshot version.')
         const next = bounded ? data.next_offset : data.next
         const batch = data.results.map((item) => validateEnvelope(item, id))
-        const end = entries.length + batch.length
+        const end = received + batch.length
         if (end > count || (end === count) !== (next === null) ||
             (next !== null && (!batch.length || (bounded ? next !== end : typeof next !== 'string' || page >= 100)))) {
           throw new VaultDataError('Invalid vault pagination.')
@@ -238,7 +240,9 @@ export function createVaultApi(request: Request = accountApi.vaultRequest) {
           if (seen.has(entry.id)) throw new VaultDataError('Vault changed during loading. Refresh and try again.')
           seen.add(entry.id)
         }
-        entries.push(...batch)
+        if (onBatch) { await onBatch(batch); signal.throwIfAborted() }
+        else entries.push(...batch)
+        received = end
         if (next === null) {
           if (version !== null) onVersion?.(version)
           return entries

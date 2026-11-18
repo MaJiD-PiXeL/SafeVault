@@ -11,6 +11,8 @@ export function RecoveryEmailSettings() {
   const [address, setAddress] = useState<RecoveryEmail | null>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [code, setCode] = useState('')
+  const [confirmRemove, setConfirmRemove] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -31,17 +33,25 @@ export function RecoveryEmailSettings() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (busy) return
+    const removing = ((event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null)?.value === 'remove'
+    if (removing && (!confirmRemove || !password)) { setError('Confirm removal and enter your account password.'); return }
     const accountPassword = password
+    const verificationCode = code
     setPassword('')
+    setCode('')
     setBusy(true)
     setError('')
     setNotice('')
     try {
-      await accountApi.enrollRecoveryEmail(email, accountPassword)
-      setNotice('Verification link sent. Open your email to confirm this address.')
+      if (removing) await accountApi.removeRecoveryEmail(accountPassword, verificationCode)
+      else await accountApi.enrollRecoveryEmail(email, accountPassword, verificationCode)
+      setConfirmRemove(false)
+      setNotice(removing ? 'Recovery email removed. Previous email links are invalid.' : 'Verification link sent. The new address can recover your account only after verification; previous email links are invalid.')
     } catch (reason) {
       setError(accountError(reason))
     } finally {
+      try { const current = await accountApi.recoveryEmail(); setAddress(current); setEmail(current.email ?? '') }
+      catch { setAddress(null) }
       setBusy(false)
     }
   }
@@ -51,19 +61,25 @@ export function RecoveryEmailSettings() {
     {error && <p role="alert" className="mt-3 text-sm text-red-300">{error}</p>}
     {notice && <p role="status" className="mt-3 text-sm text-blue-300">{notice}</p>}
     {!address ? (error ? <button type="button" className="mt-3 text-sm underline" onClick={() => { setError(''); setReload(reload + 1) }}>Retry</button> : <p className="mt-3 text-sm text-slate-400">Loading recovery settings…</p>)
-      : address.verified ? <p className="mt-3 break-all text-sm text-slate-300">{address.email} · Verified</p>
       : <>
-        <p className="mt-3 text-sm text-slate-400">Verify a recovery email to reset your account password if you forget it. Your vault uses its separate master password.</p>
-        {address.email && <p className="mt-2 break-all text-xs text-slate-400">Awaiting verification for {address.email}.</p>}
+        <p className="mt-3 text-sm leading-6 text-slate-400">Verify a recovery email to reset your account password. Changing or removing it immediately disables the previous address and its links. Your vault uses its separate master password.</p>
+        {address.email && <p className="mt-2 break-all text-xs text-slate-300">{address.email} · {address.verified ? 'Verified' : 'Awaiting verification'}</p>}
         <form onSubmit={(event) => void submit(event)} className="mt-4 max-w-md space-y-4">
-          <label className="block text-xs text-slate-300">Recovery email
+          <label className="block text-xs text-slate-300">{address.verified ? 'New recovery email' : 'Recovery email'}
             <input required type="email" autoComplete="email" maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} className={inputClass} />
           </label>
           <label className="block text-xs text-slate-300">Current account password
             <input required type="password" autoComplete="current-password" maxLength={1024} value={password} onChange={(event) => setPassword(event.target.value)} className={inputClass} />
           </label>
-          <button disabled={busy} className={buttonClass}>{busy ? 'Sending…' : 'Send verification link'}</button>
+          <label className="block text-xs text-slate-300">Authenticator or recovery code (if enabled)
+            <input autoComplete="one-time-code" maxLength={64} value={code} onChange={event => setCode(event.target.value)} className={inputClass} />
+          </label>
+          <button disabled={busy} className={buttonClass}>{busy ? 'Please wait…' : address.verified ? 'Change recovery email' : 'Send verification link'}</button>
           <button type="button" disabled={busy} className="ml-3 text-xs text-slate-400 underline" onClick={() => { setError(''); setReload(reload + 1) }}>Refresh status</button>
+          {address.email && <div className="space-y-3 border-t border-white/10 pt-4">
+            <label className="flex items-start gap-3 text-xs leading-6 text-slate-300"><input type="checkbox" checked={confirmRemove} onChange={event => setConfirmRemove(event.target.checked)} />I understand email password recovery will stop until I verify a new address.</label>
+            <button value="remove" formNoValidate disabled={busy || !confirmRemove} className="rounded-xl border border-red-400/20 px-4 py-2.5 text-sm text-red-200 disabled:opacity-50">Remove recovery email</button>
+          </div>}
         </form>
       </>}
   </section>

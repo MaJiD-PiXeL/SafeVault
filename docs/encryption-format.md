@@ -147,8 +147,9 @@ field names, unknown fields and ownership overrides are rejected.
 Unknown formats are rejected, never silently interpreted as v1. Changing
 primitives, KDF parameters or payload schemas requires explicit versioned
 migrations, client capability checks and shared test vectors. Monotonic server
-revisions prevent accidental lost updates. Malicious-server rollback detection
-remains future work. The browser queues [encrypted offline drafts](offline-edits.md)
+revisions prevent accidental lost updates. [Local history checks](browser-history.md)
+detect some previously observed content being replayed; complete malicious-server
+freshness protection remains future work. The browser queues [encrypted offline drafts](offline-edits.md)
 and preserves both versions when revisions conflict. It can queue recoverable
 Trash actions. Permanent deletion requires a connection.
 

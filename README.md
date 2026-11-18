@@ -168,6 +168,9 @@ or discard it.
 
 Public release requires an independent security audit and hosted deployment
 validation.
+For the Windows/Android beta preparation, new two-step verification, optional
+device unlock, browser extension, local replay checks and outstanding release
+items, see [the beta readiness report](docs/beta-readiness.md).
 Use synthetic test entries. Existing CLI files, Fernet data and legacy databases
 have not been migrated or removed. The local `backend/.env` remains untracked
 and ignored; its historical Git copies have not been removed.

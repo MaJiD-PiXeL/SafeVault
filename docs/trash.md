@@ -35,7 +35,8 @@ require Trash state. Each checks both counters. Counter overflow is rejected.
 
 Lifecycle timestamps and counters are server-visible metadata outside GCM AAD.
 The checks prevent stale writes during concurrent work and offline replay.
-Malicious-server rollback detection remains future work.
+[Local history checks](browser-history.md) reject some replayed content;
+complete malicious-server freshness protection remains future work.
 
 All mutation services lock the owning vault before the entry in transactions.
 Creates and backup restores use the same vault lock, serializing storage budgets

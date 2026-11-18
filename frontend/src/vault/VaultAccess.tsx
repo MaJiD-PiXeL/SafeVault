@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { LockKeyhole } from 'lucide-react'
 import type { VaultController } from './controller'
+import { hasDeviceUnlock } from './device'
 
 function RecoveryForm({ controller }: { controller: VaultController }) {
   const [key, setKey] = useState('')
@@ -42,6 +43,8 @@ export default function VaultAccess({ controller }: { controller: VaultControlle
   const [recovering, setRecovering] = useState(false)
   const creating = state.loaded && (state.vaults.length === 0 || another)
   const hasRecovery = Boolean(state.vaults.find((vault) => vault.id === state.selectedId)?.recovery)
+  const selected = state.vaults.find(vault => vault.id === state.selectedId)
+  const deviceReady = Boolean(selected && state.ownerId && hasDeviceUnlock(state.ownerId, selected))
 
   function changeMode() {
     setAnother(!another)
@@ -82,6 +85,7 @@ export default function VaultAccess({ controller }: { controller: VaultControlle
         <button disabled={state.busy} className="w-full rounded-xl brand-primary px-5 py-3 text-sm font-semibold disabled:opacity-50">{state.busy ? 'Deriving your key...' : creating ? 'Create encrypted vault' : 'Unlock vault'}</button>
       </form>}
       <button disabled={state.busy} onClick={() => void controller.load()} className="mt-5 text-xs text-slate-400 underline">Refresh vault list</button>
+      {!creating && !recovering && deviceReady && <button type="button" disabled={state.busy} onClick={() => void controller.unlockWithDevice()} className="ml-4 mt-5 rounded-xl border border-blue-400/20 px-4 py-2.5 text-sm text-blue-300">Unlock with this device</button>}
       {!creating && hasRecovery && <button type="button" disabled={state.busy} onClick={() => { setRecovering(!recovering); setMaster(''); setLocalError('') }} className="ml-4 mt-5 text-xs text-blue-300 underline">{recovering ? 'Return to vault unlock' : 'Use a recovery key'}</button>}
       {state.vaults.length > 0 && state.vaults.length < 10 && <button type="button" disabled={state.busy} onClick={changeMode} className="ml-4 mt-5 text-xs text-blue-300 underline">
         {another ? 'Return to vault unlock' : 'Create another vault'}

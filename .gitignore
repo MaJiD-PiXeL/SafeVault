@@ -19,4 +19,8 @@ native/android/local.properties
 native/ios/build/
 native/ios/SafeVault.xcodeproj/
 native/ios/GeneratedInfo.plist
+*.jks
+*.keystore
+*.pfx
+*.p12
 

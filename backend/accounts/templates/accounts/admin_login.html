@@ -1,0 +1,11 @@
+{% extends "admin/login.html" %}
+{% block content %}
+<div id="content-main">
+  <form action="{{ app_path }}" method="post" id="login-form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <input type="hidden" name="next" value="{{ next }}">
+    <div class="submit-row"><input type="submit" value="Log in"></div>
+  </form>
+</div>
+{% endblock %}

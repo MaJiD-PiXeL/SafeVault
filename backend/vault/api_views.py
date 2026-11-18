@@ -24,6 +24,13 @@ class Conflict(APIException):
 
 
 class VaultAPIView(AccountAPIView):
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if request.method in {"POST", "PATCH", "DELETE"} and request.user.is_authenticated:
+            # Keep failed/malformed writes in the budget, outside storage transactions.
+            limit_requests(request, "vault-write", subject=str(request.user.pk), default=(120, 60))
+            limit_requests(request, "vault-write-hour", subject=str(request.user.pk), default=(2000, 3600))
+
     def owned_entry(self, request, vault_id, entry_id):
         return VaultEntry.objects.for_user(request.user).get(pk=entry_id, vault_id=vault_id)
 

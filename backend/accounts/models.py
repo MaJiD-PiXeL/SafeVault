@@ -25,9 +25,19 @@ class RecoveryEmail(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="recovery_email")
     email = models.EmailField()
     verified_at = models.DateTimeField(null=True)
+    token_version = models.UUIDField(default=uuid.uuid4, editable=False)
 
 
 class PasswordResetRequest(models.Model):
     username = models.CharField(max_length=50, unique=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     next_attempt_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+
+class SecondFactor(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    encrypted_secret = models.TextField()
+    enabled = models.BooleanField(default=False)
+    created_at = models.DateTimeField(default=timezone.now)
+    last_counter = models.BigIntegerField(default=-1)
+    recovery_hashes = models.JSONField(default=list)

@@ -61,7 +61,7 @@ ALLOWED_HOSTS = [
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
+    'config.admin.SafeVaultAdminConfig',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -243,6 +243,8 @@ AXES_ENABLE_RETRY_AFTER_HEADER = True
 
 # Extra budgets cap all requests, including malformed bodies and registrations.
 AUTH_REQUEST_LIMITS = {
+    "vault-write": (120, 60), "vault-write-hour": (2000, 3600),
+    "mfa-manage": (20, 3600), "mfa-login-user": (10, 300),
     "login": (30, 60), "register": (5, 3600), "restore": (6, 3600), "key_rotation": (6, 3600),
     "vault_recovery": (12, 3600),
     "recovery-enroll": (20, 3600), "recovery-enroll-user": (5, 3600), "recovery-enroll-email": (5, 3600),

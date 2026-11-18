@@ -108,13 +108,34 @@ export function createAccountApi(baseUrl = import.meta.env?.VITE_API_BASE_URL ??
       if (!pagePath.test(path) && !offsetPath.test(path)) throw new ApiError('Invalid API path.', 400)
       return request(path, method, body, signal, '', Math.min(60000, Math.max(1000, timeoutMs)))
     },
-    async signIn(username: string, password: string) {
-      return acceptSession(await request('login', 'POST', { username, password }))
+    async signIn(username: string, password: string, code = '') {
+      return acceptSession(await request('login', 'POST', { username, password, ...(code ? { code } : {}) }))
     },
     async register(username: string, password: string) {
       return acceptSession(await request('register', 'POST', { username, password }))
     },
     async signOut() { return acceptSession(await request('logout', 'POST')) },
+    async secondFactor(signal?: AbortSignal) {
+      const data = await request('mfa', 'GET', undefined, signal)
+      if (!isObject(data) || typeof data.enabled !== 'boolean' || !Number.isInteger(data.recoveryCodesRemaining) ||
+          (data.recoveryCodesRemaining as number) < 0 || (data.recoveryCodesRemaining as number) > 10) throw new ApiError('Unexpected verification response.', 502)
+      return { enabled: data.enabled, recoveryCodesRemaining: data.recoveryCodesRemaining as number }
+    },
+    async beginSecondFactor(password: string) {
+      const data = await request('mfa', 'POST', { action: 'begin', password })
+      if (!isObject(data) || typeof data.secret !== 'string' || !/^[A-Z2-7]{32}$/.test(data.secret) ||
+          typeof data.uri !== 'string' || !data.uri.startsWith('otpauth://totp/')) throw new ApiError('Unexpected verification setup.', 502)
+      return { secret: data.secret, uri: data.uri }
+    },
+    async confirmSecondFactor(password: string, code: string, action: 'confirm' | 'regenerate' = 'confirm') {
+      const data = await request('mfa', 'POST', { action, password, code })
+      if (!isObject(data) || !Array.isArray(data.recoveryCodes) || data.recoveryCodes.length !== 10 ||
+          !data.recoveryCodes.every(item => typeof item === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{8}){3}$/.test(item))) throw new ApiError('Unexpected recovery codes.', 502)
+      return data.recoveryCodes as string[]
+    },
+    async disableSecondFactor(password: string, code: string) {
+      await request('mfa', 'POST', { action: 'disable', password, code })
+    },
     async sessions(signal?: AbortSignal): Promise<DeviceSession[]> {
       const data = await request('sessions', 'GET', undefined, signal)
       if (!isObject(data) || !Array.isArray(data.sessions) || !data.sessions.every((item) =>
@@ -137,8 +158,11 @@ export function createAccountApi(baseUrl = import.meta.env?.VITE_API_BASE_URL ??
       }
       return { email: data.email, verified: data.verified }
     },
-    async enrollRecoveryEmail(email: string, password: string) {
-      await request('recovery/email', 'POST', { email, password }, undefined, 'auth', 20000)
+    async enrollRecoveryEmail(email: string, password: string, code = '') {
+      await request('recovery/email', 'POST', { email, password, ...(code ? { code } : {}) }, undefined, 'auth', 20000)
+    },
+    async removeRecoveryEmail(password: string, code: string) {
+      await request('recovery/email', 'DELETE', { password, code })
     },
     async requestPasswordReset(username: string) {
       await request('recovery/request', 'POST', { username })

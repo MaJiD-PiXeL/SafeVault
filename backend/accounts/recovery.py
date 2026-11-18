@@ -1,4 +1,5 @@
 from datetime import timedelta
+import uuid
 from smtplib import SMTPException
 from urllib.parse import urlencode, urlsplit
 
@@ -13,7 +14,8 @@ from django.utils import timezone
 from django.views.decorators.debug import sensitive_variables
 
 from .checks import secure_origin
-from .models import AccountSession, PasswordResetRequest, RecoveryEmail
+from .models import AccountSession, PasswordResetRequest, RecoveryEmail, SecondFactor
+from . import mfa
 
 
 class InvalidRecoveryLink(Exception):
@@ -28,6 +30,10 @@ class IncorrectAccountPassword(Exception):
     pass
 
 
+class IncorrectSecondFactor(Exception):
+    pass
+
+
 class EmailDeliveryError(Exception):
     pass
 
@@ -37,7 +43,7 @@ class RecoveryTokenGenerator(PasswordResetTokenGenerator):
 
     def _make_hash_value(self, user, timestamp):
         address = user.recovery_email
-        return repr((user.pk, user.username, user.password, timestamp, address.email, address.verified_at))
+        return repr((user.pk, user.username, user.password, timestamp, address.email, address.verified_at, address.token_version))
 
 
 class VerificationTokenGenerator(RecoveryTokenGenerator):
@@ -93,16 +99,39 @@ def send_recovery_link(user, *, verify):
 
 @sensitive_variables()
 @transaction.atomic
-def enroll_recovery_email(*, user, email, password):
+def enroll_recovery_email(*, user, email, password, code="", current_session=None):
     locked = get_user_model().objects.select_for_update().filter(pk=user.pk, is_active=True).first()
     if locked is None or not locked.check_password(password):
         raise IncorrectAccountPassword
     existing = RecoveryEmail.objects.filter(user=locked).first()
-    if existing and existing.verified_at:
+    if existing and existing.verified_at and existing.email.casefold() == email.casefold():
         raise RecoveryEmailAlreadyVerified
-    address, _ = RecoveryEmail.objects.update_or_create(user=locked, defaults={"email": email})
+    factor = SecondFactor.objects.filter(user=locked, enabled=True).first()
+    if factor and not mfa.consume(factor, code):
+        raise IncorrectSecondFactor
+    address, _ = RecoveryEmail.objects.update_or_create(user=locked, defaults={
+        "email": email, "verified_at": None, "token_version": uuid.uuid4(),
+    })
+    PasswordResetRequest.objects.filter(username=locked.username).delete()
+    if current_session:
+        mfa.revoke_other_sessions(locked, current_session)
     locked.recovery_email = address
     return locked
+
+
+@sensitive_variables()
+@transaction.atomic
+def remove_recovery_email(*, user, password, code="", current_session=None):
+    locked = get_user_model().objects.select_for_update().filter(pk=user.pk, is_active=True).first()
+    if locked is None or not locked.check_password(password):
+        raise IncorrectAccountPassword
+    factor = SecondFactor.objects.filter(user=locked, enabled=True).first()
+    if factor and not mfa.consume(factor, code):
+        raise IncorrectSecondFactor
+    RecoveryEmail.objects.filter(user=locked).delete()
+    PasswordResetRequest.objects.filter(username=locked.username).delete()
+    if current_session:
+        mfa.revoke_other_sessions(locked, current_session)
 
 
 @sensitive_variables()

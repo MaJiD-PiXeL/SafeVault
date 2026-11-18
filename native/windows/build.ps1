@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory)]
-    [string]$WebView2Sdk
+    [string]$WebView2Sdk,
+    [string]$CertificateThumbprint,
+    [string]$TimestampServer = 'http://timestamp.digicert.com'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,8 +25,16 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $dependencies = @($core, $winForms, (Join-Path $runtime 'WebView2Loader.dll'),
     (Join-Path $sdk 'LICENSE.txt'), (Join-Path $sdk 'NOTICE.txt'))
 Copy-Item -LiteralPath $dependencies -Destination $output
+if ($CertificateThumbprint) {
+    $certificate = Get-Item -LiteralPath "Cert:/CurrentUser/My/$CertificateThumbprint"
+    if (-not $certificate.HasPrivateKey) { throw 'The signing certificate must include its private key.' }
+    $signed = Set-AuthenticodeSignature -LiteralPath (Join-Path $output 'SafeVault.exe') -Certificate $certificate -TimestampServer $TimestampServer -HashAlgorithm SHA256
+    if ($signed.Status -ne 'Valid') { throw "Executable signing failed: $($signed.Status)" }
+}
 $files = @('SafeVault.exe', 'Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll',
     'WebView2Loader.dll', 'LICENSE.txt', 'NOTICE.txt') | ForEach-Object { Join-Path $output $_ }
 $archive = Join-Path $output 'SafeVault-Windows-x64.zip'
 Compress-Archive -LiteralPath $files -DestinationPath $archive -Force
+$hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+Set-Content -LiteralPath (Join-Path $output 'SafeVault-Windows-x64.zip.sha256') -Value "$hash  SafeVault-Windows-x64.zip" -Encoding ascii
 Get-Item -LiteralPath $archive

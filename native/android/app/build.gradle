@@ -11,6 +11,28 @@ android {
     namespace 'com.nexora.safevault'
     compileSdk 36
 
+    def signingStore = System.getenv('SAFEVAULT_ANDROID_KEYSTORE')
+    if (signingStore) {
+        signingConfigs {
+            distribution {
+                storeFile file(signingStore)
+                storePassword System.getenv('SAFEVAULT_ANDROID_STORE_PASSWORD')
+                keyAlias System.getenv('SAFEVAULT_ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('SAFEVAULT_ANDROID_KEY_PASSWORD')
+            }
+        }
+        buildTypes { release { signingConfig signingConfigs.distribution } }
+    }
+    // Never quietly produce a release artifact with no distribution signature.
+    gradle.taskGraph.whenReady { graph ->
+        if (graph.allTasks.any { it.project == project && it.name in ['assembleRelease', 'bundleRelease'] }) {
+            if (!signingStore || !System.getenv('SAFEVAULT_ANDROID_STORE_PASSWORD') ||
+                !System.getenv('SAFEVAULT_ANDROID_KEY_ALIAS') || !System.getenv('SAFEVAULT_ANDROID_KEY_PASSWORD')) {
+                throw new GradleException('Release builds require the SAFEVAULT_ANDROID signing environment variables. Use assembleDebug for a local beta.')
+            }
+        }
+    }
+
     defaultConfig {
         applicationId 'com.nexora.safevault'
         minSdk 23

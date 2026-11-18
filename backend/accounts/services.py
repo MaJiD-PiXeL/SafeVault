@@ -1,4 +1,6 @@
 from django.contrib.auth import get_user_model, login
+from django.contrib.auth.signals import user_logged_in
+from django.dispatch import receiver
 from django.contrib.sessions.models import Session
 from django.db import transaction
 from django.utils import timezone
@@ -6,6 +8,7 @@ from django.views.decorators.debug import sensitive_variables
 
 from vault.models import SecuritySettings
 from .models import AccountSession
+from .mfa import SESSION_PROOF, mark_verified
 
 
 @sensitive_variables()
@@ -18,10 +21,20 @@ def register_account(*, request, username, password):
 
 
 @transaction.atomic
-def start_session(request, user):
+def start_session(request, user, *, factor=None):
     # Serialize sign-ins for this user before imposing the active-session cap.
     get_user_model().objects.select_for_update().get(pk=user.pk)
+    request.session.pop(SESSION_PROOF, None)
+    if factor is not None:
+        mark_verified(request, factor)
     login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+
+
+@receiver(user_logged_in, dispatch_uid="safevault.track-all-account-sessions")
+@transaction.atomic
+def record_session(sender, request, user, **kwargs):
+    # Include admin logins in the same revocation list and ten-session cap.
+    get_user_model().objects.select_for_update().get(pk=user.pk)
     request.session.save()
     AccountSession.objects.get_or_create(user=user, session_id=request.session.session_key)
     excess = list(AccountSession.objects.filter(user=user, session__expire_date__gt=timezone.now())

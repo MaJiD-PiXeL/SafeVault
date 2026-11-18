@@ -5,6 +5,8 @@ on:
     paths:
       - 'native/android/**'
       - 'native/ios/**'
+      - 'native/windows/**'
+      - 'native/extension/**'
       - '.github/workflows/build-mobile.yml'
   workflow_dispatch:
     inputs:
@@ -12,6 +14,11 @@ on:
         description: SafeVault deployment hostname without scheme or path
         required: true
         type: string
+      include_ios:
+        description: Also build the deferred iOS Simulator app
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -68,6 +75,7 @@ jobs:
           if-no-files-found: error
 
   ios:
+    if: github.event_name == 'pull_request' || inputs.include_ios
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
@@ -96,4 +104,47 @@ jobs:
         with:
           name: SafeVault-iOS-Simulator
           path: ${{ runner.temp }}/SafeVault-iOS-Simulator.zip
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build Windows beta
+        shell: pwsh
+        run: |
+          $package = Join-Path $env:RUNNER_TEMP 'webview2.zip'
+          $sdk = Join-Path $env:RUNNER_TEMP 'webview2-sdk'
+          Invoke-WebRequest 'https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4314.35/microsoft.web.webview2.1.0.4314.35.nupkg' -OutFile $package
+          Expand-Archive -LiteralPath $package -DestinationPath $sdk
+          ./native/windows/build.ps1 -WebView2Sdk $sdk
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: SafeVault-Windows-beta
+          path: |
+            native/windows/dist/SafeVault-Windows-x64.zip
+            native/windows/dist/SafeVault-Windows-x64.zip.sha256
+          if-no-files-found: error
+
+  extension:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Package origin-bound extension
+        run: python native/extension/build.py --origin "https://$SAFEVAULT_HOST"
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: SafeVault-Extension-beta
+          path: native/extension/dist/SafeVault-Extension.zip
           if-no-files-found: error

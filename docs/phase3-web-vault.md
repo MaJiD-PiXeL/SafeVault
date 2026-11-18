@@ -172,8 +172,10 @@ the user. A successful recovery replaces the master password and consumes the ke
 
 [Offline editing](offline-edits.md) queues encrypted drafts in the browser when
 an unlocked vault loses connectivity and preserves them when server versions
-conflict. Independent audit, rollback detection, large-vault streaming and
-production hardening remain future work. Use synthetic test entries.
+conflict. [Local replay checks and page-by-page decryption](browser-history.md)
+now apply within the existing vault size limits. Independent audit, stronger
+cross-device freshness guarantees, unbounded-vault processing and production
+validation remain outstanding. Use synthetic test entries.
 
 References: [hash-wasm API](https://github.com/Daninet/hash-wasm),
 [RFC 9106](https://www.rfc-editor.org/rfc/rfc9106.html),

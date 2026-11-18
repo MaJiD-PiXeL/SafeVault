@@ -1,6 +1,7 @@
 import { ApiError, accountError } from '../api.ts'
 import { createEncryptedVault, createRecoveryKey, decryptEntry, encryptEntry, prepareKeyRotation, rewrapEncryptedVault,
-  rewrapWithRecovery, unlockEncryptedVault } from './crypto.ts'
+  rewrapWithRecovery, unlockEncryptedVault, withVerifiedDataKey } from './crypto.ts'
+import { forgetDeviceUnlock, openDeviceUnlock, saveDeviceUnlock } from './device.ts'
 import type { DeriveKey } from './crypto.ts'
 import { DEFAULT_PREFERENCES, validatePayload, VaultDataError } from './format.ts'
 import type { EncryptedEntry, EntryPayload, RecoveryEnvelope, SecurityPreferences, UnlockedEntry, VaultMetadata } from './format.ts'
@@ -11,6 +12,7 @@ import type { OpenedBackup } from './backup.ts'
 import type { RestoreEnvelope } from './api.ts'
 import { OutboxError, pendingWriteId } from './outbox.ts'
 import type { Outbox, PendingWrite, TrashAction } from './outbox.ts'
+import type { HistoryGuard } from './history.ts'
 
 type EntrySnapshot = { entries: UnlockedEntry[]; trash: UnlockedEntry[]; entriesVersion: string | null }
 type EncryptedSnapshot = { envelopes: EncryptedEntry[]; entriesVersion: string | null }
@@ -23,7 +25,7 @@ type Snapshot = { ownerId: number | null; loaded: boolean; busy: boolean; unlock
   backupResult: string; masterPasswordResult: string; keyRotationResult: string; recoveryResult: string;
   recoveryCode: string | null; entriesVersion: string | null; pending: PendingChange[]; pendingError: string }
 type Operation = { signal: AbortSignal }
-type RunOptions = { work?: 'backup' | 'recovery'; allowOffline?: boolean }
+type RunOptions = { work?: 'backup' | 'recovery'; allowOffline?: boolean; removed?: string[] }
 const initial = (): Snapshot => ({ ownerId: null, loaded: false, busy: false, unlocked: false, error: '',
   offlineReady: false, offlineUnlocked: false,
   vaults: [], selectedId: null, entries: [], trash: [], preferences: { ...DEFAULT_PREFERENCES }, lockEpoch: 0,
@@ -79,14 +81,15 @@ export class VaultController {
   #derive: DeriveKey
   #clock: () => number
   #outbox?: Outbox
+  #history?: HistoryGuard
   #offlineCache: { vault: VaultMetadata; snapshot: EncryptedSnapshot } | null = null
   #backupDraft: OpenedBackup | null = null
   #backupWork = false
   #recoveryDraft: { previous: VaultMetadata; recovery: RecoveryEnvelope } | null = null
   #recoveryWork = false
 
-  constructor(api: VaultApi, derive: DeriveKey, clock = Date.now, outbox?: Outbox) {
-    this.#api = api; this.#derive = derive; this.#clock = clock; this.#outbox = outbox
+  constructor(api: VaultApi, derive: DeriveKey, clock = Date.now, outbox?: Outbox, history?: HistoryGuard) {
+    this.#api = api; this.#derive = derive; this.#clock = clock; this.#outbox = outbox; this.#history = history
   }
   getSnapshot = () => this.#state
   subscribe = (listener: () => void) => { this.#listeners.add(listener); return () => { this.#listeners.delete(listener) } }
@@ -147,6 +150,17 @@ export class VaultController {
     try {
       const result = await action({ signal: abort.signal })
       if (epoch !== this.#epoch || abort.signal.aborted) return false
+      const next = { ...this.#state, ...result.patch }
+      const vault = next.vaults.find(item => item.id === next.selectedId)
+      if (this.#history && vault && !next.offlineUnlocked && (result.patch.entries || result.patch.trash || (result.lock && result.patch.vaults))) {
+        const previous = new Map([...this.#state.entries, ...this.#state.trash].map(item => [item.envelope.id, item.envelope]))
+        const changed = (result.lock ? [] : [...next.entries, ...next.trash]).map(item => item.envelope).filter(item => {
+          const old = previous.get(item.id)
+          return !old || !sameContent(old, item) || old.state_version !== item.state_version
+        })
+        await this.#history.observe(next.ownerId!, vault, changed, abort.signal, options.removed)
+        if (epoch !== this.#epoch || abort.signal.aborted) return false
+      }
       if (result.lock) this.lock()
       if (result.key) { this.#key = result.key; this.#lastActivity = this.#clock() }
       if (result.backupDraft !== undefined) this.#backupDraft = result.backupDraft
@@ -242,7 +256,31 @@ export class VaultController {
   }
 
   async #readEntries(key: CryptoKey, id: string, signal: AbortSignal, keyVersion = this.#selectedVault()?.key_version ?? 1) {
-    return this.#decryptSnapshot(key, await this.#readEnvelopes(id, signal, keyVersion), signal)
+    let streamed = false
+    const snapshot: EntrySnapshot = { entries: [], trash: [], entriesVersion: null }
+    try {
+      const fallback = await this.#api.entries(id, signal, version => { snapshot.entriesVersion = version }, keyVersion,
+        async batch => {
+          streamed = true
+          const part = await this.#decryptSnapshot(key, { envelopes: batch, entriesVersion: null }, signal)
+          snapshot.entries.push(...part.entries); snapshot.trash.push(...part.trash)
+        })
+      signal.throwIfAborted()
+      // Older API adapters ignore the optional page consumer.
+      return streamed ? snapshot : this.#decryptSnapshot(key, { envelopes: fallback, entriesVersion: snapshot.entriesVersion }, signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      if (error instanceof VaultDataError || (error instanceof ApiError && error.status === 404)) this.#offlineCache = null
+      throw error
+    }
+  }
+
+  async #remember(snapshot: EntrySnapshot, signal: AbortSignal) {
+    const vault = this.#selectedVault()
+    if (this.#history && vault && !this.#state.offlineUnlocked) {
+      await this.#history.observe(this.#state.ownerId!, vault, [...snapshot.entries, ...snapshot.trash].map(item => item.envelope), signal)
+      signal.throwIfAborted()
+    }
   }
 
   async #readSyncEntries(key: CryptoKey, id: string, signal: AbortSignal, keyVersion: number) {
@@ -250,7 +288,7 @@ export class VaultController {
     const delta = current.length > 0
       ? await this.#api.entriesDelta?.(id, current.map(({ envelope }) => envelope), signal, keyVersion)
       : null
-    return this.#decryptSnapshot(key, delta ?? await this.#readEnvelopes(id, signal, keyVersion), signal, current)
+    return delta ? this.#decryptSnapshot(key, delta, signal, current) : this.#readEntries(key, id, signal, keyVersion)
   }
 
   async #readPending(key: CryptoKey, vaultId: string, keyVersion: number, signal: AbortSignal) {
@@ -374,7 +412,26 @@ export class VaultController {
     }
   }
 
-  unlock = (master: string) => this.#run(async ({ signal }) => {
+  enableDeviceUnlock = (master: string) => this.#run(async ({ signal }) => {
+    const vault = this.#selectedVault()
+    if (!this.#state.unlocked || !vault) throw new VaultDataError('Unlock your vault first.')
+    const vaults = await this.#fetchVaults(signal)
+    if (!vaults.some(item => sameWrapper(item, vault))) throw new VaultDataError('The vault changed. Unlock it again.')
+    await withVerifiedDataKey(vault, master, this.#derive, signal,
+      bytes => saveDeviceUnlock(this.#state.ownerId!, vault, bytes, signal))
+    return { patch: {} }
+  })
+
+  disableDeviceUnlock = () => {
+    const vault = this.#selectedVault()
+    if (vault && this.#state.ownerId !== null) { forgetDeviceUnlock(this.#state.ownerId, vault); this.#publish({}) }
+  }
+
+  unlock = (master: string) => this.#unlockWith((vault, signal) => unlockEncryptedVault(vault, master, this.#derive, signal))
+
+  unlockWithDevice = () => this.#unlockWith((vault, signal) => openDeviceUnlock(this.#state.ownerId!, vault, signal))
+
+  #unlockWith = (open: (vault: VaultMetadata, signal: AbortSignal) => Promise<CryptoKey>) => this.#run(async ({ signal }) => {
     const selectedId = this.#state.selectedId
     if (!this.#state.loaded || !selectedId) throw new VaultDataError('Load and select your vault first.')
     // A different device may have changed the password since this client locked.
@@ -393,11 +450,12 @@ export class VaultController {
       metadata = vaults.find((vault) => vault.id === selectedId)
     } catch (error) { metadata = useCached(error).vault }
     if (!metadata) throw new VaultDataError('Load and select your vault first.')
-    const key = await unlockEncryptedVault(metadata, master, this.#derive, signal)
+    const key = await open(metadata, signal)
     const keyVersion = metadata.key_version ?? 1
     signal.throwIfAborted()
-    const encrypted = cachedSnapshot ?? await this.#readEnvelopes(metadata.id, signal, keyVersion).catch((error) => useCached(error).snapshot)
-    const snapshot = await this.#decryptSnapshot(key, encrypted, signal)
+    const snapshot = cachedSnapshot ? await this.#decryptSnapshot(key, cachedSnapshot, signal) :
+      await this.#readEntries(key, metadata.id, signal, keyVersion).catch(async error =>
+        this.#decryptSnapshot(key, useCached(error).snapshot, signal))
     const drafts = await this.#readPending(key, metadata.id, keyVersion, signal)
     return { key, patch: { ...snapshot, ...drafts, vaults, unlocked: true, offlineUnlocked: cachedSnapshot !== undefined,
       masterPasswordResult: '', keyRotationResult: '', recoveryResult: '' } }
@@ -434,6 +492,7 @@ export class VaultController {
       return { connection, snapshot: await this.#readEntries(key, id, signal, keyVersion) }
     }, key, id, keyVersion, signal)
     signal.throwIfAborted()
+    await this.#remember(snapshot, signal)
     const drafts = await this.#readPending(key, id, keyVersion, signal)
     return { patch: drafts.pendingError ? { ...snapshot, ...drafts, ...connection } :
       { ...await this.#replay(snapshot, drafts.pending, signal, true), pendingError: '', ...connection } }
@@ -465,6 +524,7 @@ export class VaultController {
         return { connection, remote, snapshot }
       }, key, selectedId, keyVersion, signal)
       if (!current()) return
+      await this.#remember(snapshot, signal)
       const drafts = await this.#readPending(key, selectedId, keyVersion, signal)
       if (!current()) return
       if (remote === entriesVersion && !drafts.pending.length) {
@@ -473,6 +533,10 @@ export class VaultController {
       }
       const patch = drafts.pendingError ? { ...snapshot, ...drafts } :
         { ...await this.#replay(snapshot, drafts.pending, signal), pendingError: '' }
+      const vault = this.#selectedVault()
+      if (this.#history && vault && !this.#state.offlineUnlocked && current()) {
+        await this.#history.observe(this.#state.ownerId!, vault, [...patch.entries, ...patch.trash].map(item => item.envelope), signal)
+      }
       if (current()) this.#publish({ ...patch, ...connection })
     } catch (error) {
       const lostAccess = accessLost(error) || (error instanceof ApiError && error.status === 404 && Boolean(this.#offlineCache || this.#outbox || entriesVersion))
@@ -559,7 +623,7 @@ export class VaultController {
     if (pending?.some((write) => write.envelope.id === id)) throw new OutboxError('Sync or discard this entry’s local change before permanently deleting it.')
     await this.#api.purge(entry.envelope, signal, this.#selectedVault()?.key_version)
     return { patch: { trash: this.#state.trash.filter((item) => item.envelope.id !== id), backupExport: null } }
-  })
+  }, { removed: [id] })
 
   updatePreferences = (value: SecurityPreferences) => this.#run(async ({ signal }) => ({ patch: { preferences: await this.#api.updatePreferences(value, signal) } }))
 
@@ -598,6 +662,11 @@ export class VaultController {
     const vaults = this.#state.vaults
     const { envelopes, entriesVersion } = await this.#readEnvelopes(previous.id, signal, previous.key_version ?? 1)
     if (!entriesVersion) throw new VaultDataError('A current vault snapshot is required to rotate its encryption key.')
+    // Authenticate and check the old snapshot before it can become a new key
+    // version. A rollback must never be committed by the rotation operation.
+    const key = await unlockEncryptedVault(previous, currentMaster, this.#derive, signal)
+    const snapshot = await this.#decryptSnapshot(key, { envelopes, entriesVersion }, signal)
+    await this.#remember(snapshot, signal)
     const { vault, entries } = await prepareKeyRotation(previous, envelopes, currentMaster, newMaster, this.#derive, signal)
     signal.throwIfAborted()
     // A cancellation or lost response after dispatch cannot safely reuse the old wrapper.

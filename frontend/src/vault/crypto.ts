@@ -74,6 +74,12 @@ export async function unlockEncryptedVault(value: unknown, master: string, deriv
   finally { bytes.fill(0) }
 }
 
+export async function withVerifiedDataKey(value: VaultMetadata, master: string, derive: DeriveKey, signal: AbortSignal,
+  action: (bytes: Uint8Array<ArrayBuffer>) => Promise<void>) {
+  const bytes = await unwrapDataKey(validateVault(value), master, derive, signal)
+  try { signal.throwIfAborted(); await action(bytes) } finally { bytes.fill(0) }
+}
+
 export async function rewrapEncryptedVault(value: unknown, currentMaster: string, newMaster: string, derive: DeriveKey, signal: AbortSignal) {
   requireCrypto()
   const previous = validateVault(value)

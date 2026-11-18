@@ -46,6 +46,8 @@ import RecoveryKeyPanel from './vault/RecoveryKeyPanel'
 import BackupPanel from './vault/BackupPanel'
 import OfflineBackupPanel from './vault/OfflineBackupPanel'
 import PendingChanges from './vault/PendingChanges'
+import { AutofillRequestPanel } from './vault/AutofillPanel'
+import type { FillRequest } from './vault/autofill'
 import HealthPanel from './vault/HealthPanel'
 import { analyzePasswords } from './vault/health'
 import TrashPanel from './vault/TrashPanel'
@@ -98,7 +100,7 @@ const navigation = [
   { label: 'Trash', icon: Trash2, count: '—' },
 ]
 
-function App({ initialAccountLink }: { initialAccountLink: ReturnType<typeof takeAccountLink> }) {
+function App({ initialAccountLink, initialFillRequest }: { initialAccountLink: ReturnType<typeof takeAccountLink>; initialFillRequest: FillRequest | null }) {
   const account = useAccount()
   const vault = useVault(account.user?.id ?? null, account.user !== null)
   const [activePage, setActivePage] = useState(initialAccountLink ? 'Account' : 'Overview')
@@ -113,6 +115,7 @@ function App({ initialAccountLink }: { initialAccountLink: ReturnType<typeof tak
   const [apiError, setApiError] = useState(false)
   const dialogRef = useRef<HTMLDialogElement>(null)
   const health = useMemo(() => analyzePasswords(vault.entries), [vault.entries])
+  const [fillRequest, setFillRequest] = useState(initialFillRequest)
 
   useEffect(() => {
     function openAccountLink() {
@@ -409,6 +412,7 @@ function App({ initialAccountLink }: { initialAccountLink: ReturnType<typeof tak
               {[...navigation.map((item) => item.label), 'Security Center', 'Password Generator', 'Backups', 'Offline Backup', 'Account', 'Settings', 'Help'].map((page) => <option key={page}>{page}</option>)}
             </select>
           </label>
+          {fillRequest && <AutofillRequestPanel key={fillRequest.token} request={fillRequest} controller={vault.controller} onClose={() => setFillRequest(null)} />}
           <div className="workspace-banner flex flex-col justify-between gap-6 rounded-2xl p-6 sm:flex-row sm:items-center sm:p-8">
             <div>
               <div className="mb-4 flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-slate-300">
@@ -498,7 +502,7 @@ function App({ initialAccountLink }: { initialAccountLink: ReturnType<typeof tak
                 <div className="flex flex-wrap gap-2">
                   <select aria-label="Filter category" value={pageCategory} onChange={(event) => setCategory(event.target.value)} className="min-w-0 max-w-32 rounded-lg border border-white/10 bg-vault-surface px-2 text-[11px] text-slate-300"><option value="">All categories</option>{categories.map((value) => <option key={value} value={value}>{value}</option>)}</select>
                   <select aria-label="Sort entries" value={sort} onChange={(event) => setSort(event.target.value)} className="min-w-0 rounded-lg border border-white/10 bg-vault-surface px-2 py-2 text-[11px] text-slate-300"><option value="recent">Recently updated</option><option value="title">Title A–Z</option></select>
-                  <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-white/[0.07] bg-black/20 px-3 sm:w-52">
+                  <div className="flex h-9 w-full min-w-0 flex-none items-center gap-2 rounded-lg border border-white/[0.07] bg-black/20 px-3 sm:w-52 sm:flex-1">
                     <Search size={14} className="shrink-0 text-slate-600" />
 
                     <input

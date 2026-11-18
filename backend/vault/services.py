@@ -12,6 +12,15 @@ from .models import NonceReservation, RestoreReceipt, SecuritySettings, Vault, V
 
 MAX_VAULT_ENTRIES = 5000
 MAX_VAULT_CIPHERTEXT_SIZE = 32 * 1024 * 1024
+MAX_VAULT_NONCE_RESERVATIONS = 100000
+
+
+def _reserve_nonces(vault, nonces):
+    # Every caller holds the vault row lock. Historical nonces are never pruned
+    # merely to make room: reads/exports remain available at this write limit.
+    if vault.nonce_reservations.count() + len(nonces) > MAX_VAULT_NONCE_RESERVATIONS:
+        raise ValidationError("Vault operation history is full. Export and restore into a new vault.")
+    NonceReservation.objects.bulk_create([NonceReservation(vault=vault, nonce=nonce) for nonce in nonces], batch_size=100)
 
 
 def _check_capacity(vault, count, size, exclude_id=None):
@@ -147,7 +156,7 @@ def rotate_key(*, user, vault_id, expected_key_version, expected_entries_version
             raise ValidationError("Rotation requires new ciphertext of the same size.")
         row.nonce, row.ciphertext = item["nonce"], item["ciphertext"]
     # Keep historical nonce reservations and backup receipts across rotations.
-    NonceReservation.objects.bulk_create([NonceReservation(vault=vault, nonce=nonce) for nonce in nonces], batch_size=100)
+    _reserve_nonces(vault, nonces)
     # Limit statement size and memory even when entries approach the ciphertext limit.
     for start in range(0, len(rows), 32):
         VaultEntry.objects.bulk_update(rows[start:start + 32], ["nonce", "ciphertext"])
@@ -203,7 +212,7 @@ def create_entry(*, user, vault_id, entry_id, nonce, ciphertext, expected_key_ve
         raise NonceConflict("Nonce already used.")
     entry.full_clean()
     _check_capacity(vault, 1, len(entry.ciphertext))
-    NonceReservation.objects.create(vault=vault, nonce=nonce)
+    _reserve_nonces(vault, [nonce])
     entry.save(force_insert=True)
     _change_entries_version(vault_id)
     return entry
@@ -224,7 +233,7 @@ def update_entry(*, user, entry_id, expected_revision, nonce, ciphertext, expect
         raise NonceConflict("Nonce already used. Encrypt again with a fresh nonce.")
     entry.full_clean()
     _check_capacity(entry.vault, 1, len(entry.ciphertext), exclude_id=entry.pk)
-    NonceReservation.objects.create(vault=entry.vault, nonce=nonce)
+    _reserve_nonces(entry.vault, [nonce])
     entry.save(update_fields=["nonce", "ciphertext", "revision", "updated_at"])
     _change_entries_version(entry.vault_id)
     return entry
@@ -295,7 +304,7 @@ def restore_entries(*, user, vault_id, backup_id, archive_digest, entries, expec
         raise RevisionConflict("Entry identity or nonce already used.")
     _check_capacity(vault, len(rows), sum(len(row.ciphertext) for row in rows))
     # All fields were validated above; bulk inserts preserve one atomic transaction.
-    NonceReservation.objects.bulk_create([NonceReservation(vault=vault, nonce=row.nonce) for row in rows], batch_size=100)
+    _reserve_nonces(vault, nonces)
     VaultEntry.objects.bulk_create(rows, batch_size=100)
     receipt = RestoreReceipt.objects.create(vault=vault, backup_id=backup_id, archive_digest=archive_digest, entry_count=len(rows))
     _change_entries_version(vault_id)

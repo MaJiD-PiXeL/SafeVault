@@ -23,8 +23,8 @@ def client_ip(request):
         return "0.0.0.0"
 
 
-def limit_requests(request, scope, *, subject=None):
-    limit, seconds = settings.AUTH_REQUEST_LIMITS[scope]
+def limit_requests(request, scope, *, subject=None, default=None):
+    limit, seconds = settings.AUTH_REQUEST_LIMITS.get(scope, default) or settings.AUTH_REQUEST_LIMITS[scope]
     now = int(timezone.now().timestamp())
     window = now // seconds
     identifier = client_ip(request) if subject is None else subject

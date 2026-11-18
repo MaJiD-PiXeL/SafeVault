@@ -82,7 +82,7 @@ class AccountRecoveryTests(TestCase):
         response = self.owner_client.get(BASE + "email/")
         self.assertEqual(response.json(), {"email": newer_email, "verified": True})
         self.assertEqual(response["Cache-Control"], "no-store")
-        self.assertEqual(self.enroll().status_code, 409)
+        self.assertEqual(self.enroll(email=newer_email).status_code, 409)
         self.assertEqual(RecoveryEmail.objects.get(user=self.owner).email, newer_email)
         self.assertIsNone(self.guest.get("/api/auth/session/").json()["user"])
 

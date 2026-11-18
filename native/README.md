@@ -44,8 +44,14 @@ and install the APK from the same artifact. GitHub runners can generate a new
 debug signing key on each run. Use the matching file and reinstall the app if
 its signing certificate changes.
 
-Sign the release bundle with your Android distribution key. For Play builds,
-publish the Digital Asset Links association for `com.nexora.safevault` with the
+Sign the release bundle with your Android distribution key. Before a release build,
+set `SAFEVAULT_ANDROID_KEYSTORE` to the keystore's absolute path and supply
+`SAFEVAULT_ANDROID_STORE_PASSWORD`, `SAFEVAULT_ANDROID_KEY_ALIAS` and
+`SAFEVAULT_ANDROID_KEY_PASSWORD` through the build environment. Release
+assembly/bundling fails if these values are missing; use `assembleDebug` for
+the beta. Keep the signing key and passwords outside Git.
+
+For Play builds, publish the Digital Asset Links association for `com.nexora.safevault` with the
 Play app-signing certificate's SHA-256 fingerprint. Check that the installed
 app opens fullscreen and test sign-in, locking, file import and backup export
 on a device.
@@ -68,3 +74,13 @@ For a device build or archive, configure the Apple signing team and the real
 `SAFEVAULT_HOST` in Xcode. Test sign-in, locking, file import and backup export
 on the device before submitting a build.
 [XcodeGen project generation](https://github.com/yonaskolb/XcodeGen)
+
+## Browser extension and beta release status
+
+See the [Chrome/Edge autofill instructions](../docs/browser-autofill.md) and
+[beta readiness report](../docs/beta-readiness.md). The mobile workflow also
+packages a Windows portable beta and the origin-bound extension. In manual
+runs, `include_ios` defaults to false while iOS is deferred. Windows builds
+can optionally pass `-CertificateThumbprint` to `build.ps1` for Authenticode
+signing with a certificate already installed in the current user's store.
+The Windows ZIP has a separate SHA-256 checksum file.

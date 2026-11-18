@@ -3,9 +3,12 @@ import { createVaultApi } from './api'
 import { VaultController } from './controller'
 import { deriveInWorker } from './derive'
 import { createOutbox } from './outbox'
+import { createHistoryGuard } from './history'
 
 export function useVault(ownerId: number | null, enabled: boolean) {
-  const [controller] = useState(() => new VaultController(createVaultApi(), deriveInWorker, Date.now, createOutbox()))
+  const [controller] = useState(() => new VaultController(createVaultApi(), deriveInWorker, Date.now, createOutbox(), createHistoryGuard({
+    getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value),
+  })))
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   useLayoutEffect(() => {
     controller.switchAccount(ownerId, enabled)

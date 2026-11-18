@@ -1,5 +1,5 @@
-from django.contrib.auth import authenticate, logout
-from django.db import IntegrityError
+from django.contrib.auth import authenticate, get_user_model, logout
+from django.db import IntegrityError, transaction
 from django.middleware.csrf import get_token, rotate_token
 from django.utils.cache import patch_vary_headers
 from django.utils.decorators import method_decorator
@@ -11,9 +11,10 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import AccountSession
+from .models import AccountSession, SecondFactor
 from .security import limit_requests
-from .serializers import AccountCredentials, RegistrationSerializer
+from .serializers import LoginCredentials, RegistrationSerializer
+from .mfa import consume
 from .services import active_sessions, register_account, revoke_session, start_session
 
 
@@ -69,12 +70,27 @@ class LoginView(AccountAPIView):
         if request.user.is_authenticated:
             raise PermissionDenied("Sign out before signing in to another account.")
         limit_requests(request, "login")
-        serializer = AccountCredentials(data=request.data)
+        serializer = LoginCredentials(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = authenticate(request=request._request, **serializer.validated_data)
+        credentials = serializer.validated_data
+        user = authenticate(request=request._request, username=credentials["username"], password=credentials["password"])
         if user is None:
             return Response({"detail": "Invalid username or account password."}, status=400)
-        start_session(request._request, user)
+        if SecondFactor.objects.filter(user=user, enabled=True).exists():
+            limit_requests(request, "mfa-login-user", subject=str(user.pk))
+        return self.finish_login(request, user, credentials["code"])
+
+    @sensitive_variables()
+    @transaction.atomic
+    def finish_login(self, request, user, code):
+        locked = get_user_model().objects.select_for_update().get(pk=user.pk)
+        if not locked.is_active or locked.password != user.password:
+            return Response({"detail": "Invalid username or account password."}, status=400)
+        factor = SecondFactor.objects.filter(user=locked, enabled=True).first()
+        if factor:
+            if not consume(factor, code):
+                return Response({"detail": "Enter a fresh authenticator code or an unused recovery code.", "code": "mfa_required"}, status=400)
+        start_session(request._request, user, factor=factor)
         request.user = user
         return Response(session_payload(request))
 

@@ -1,9 +1,10 @@
 from django.urls import path
 
-from . import recovery_views, views
+from . import mfa_views, recovery_views, views
 
 app_name = "accounts"
 urlpatterns = [
+    path("mfa/", mfa_views.SecondFactorView.as_view(), name="mfa"),
     path("session/", views.SessionView.as_view(), name="session"),
     path("register/", views.RegisterView.as_view(), name="register"),
     path("login/", views.LoginView.as_view(), name="login"),

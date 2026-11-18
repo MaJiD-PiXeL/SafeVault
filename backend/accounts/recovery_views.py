@@ -5,11 +5,11 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from .models import PasswordResetRequest, RecoveryEmail
-from .recovery import (EmailDeliveryError, IncorrectAccountPassword, InvalidRecoveryLink,
+from .recovery import (EmailDeliveryError, IncorrectAccountPassword, IncorrectSecondFactor, InvalidRecoveryLink,
                        RecoveryEmailAlreadyVerified, enroll_recovery_email, link_origin,
-                       reset_account_password, send_recovery_link, verify_recovery_email)
+                       remove_recovery_email, reset_account_password, send_recovery_link, verify_recovery_email)
 from .security import limit_requests
-from .serializers import (RecoveryEmailSerializer, RecoveryLinkSerializer, RecoveryRequestSerializer,
+from .serializers import (RecoveryEmailCredentials, RecoveryEmailSerializer, RecoveryLinkSerializer, RecoveryRequestSerializer,
                           ResetPasswordSerializer)
 from .views import AccountAPIView
 
@@ -28,14 +28,30 @@ class RecoveryEmailView(AccountAPIView):
         try:
             link_origin()
             limit_requests(request, "recovery-enroll-email", subject=serializer.validated_data["email"].casefold())
-            user = enroll_recovery_email(user=request.user, **serializer.validated_data)
+            user = enroll_recovery_email(user=request.user, current_session=request.session.session_key, **serializer.validated_data)
             send_recovery_link(user, verify=True)
         except IncorrectAccountPassword:
             raise ValidationError({"detail": "Incorrect account password."}) from None
+        except IncorrectSecondFactor:
+            raise ValidationError({"detail": "Enter a fresh authenticator or recovery code."}) from None
         except RecoveryEmailAlreadyVerified:
             return Response({"detail": "A recovery email is already verified."}, status=409)
         except EmailDeliveryError:
             return Response({"detail": "Verification email could not be sent. Try again later."}, status=503)
+        return Response(status=204)
+
+    @sensitive_variables()
+    def delete(self, request):
+        limit_requests(request, "recovery-enroll")
+        limit_requests(request, "recovery-enroll-user", subject=request.user.pk)
+        serializer = RecoveryEmailCredentials(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            remove_recovery_email(user=request.user, current_session=request.session.session_key, **serializer.validated_data)
+        except IncorrectAccountPassword:
+            raise ValidationError({"detail": "Incorrect account password."}) from None
+        except IncorrectSecondFactor:
+            raise ValidationError({"detail": "Enter a fresh authenticator or recovery code."}) from None
         return Response(status=204)
 
 
