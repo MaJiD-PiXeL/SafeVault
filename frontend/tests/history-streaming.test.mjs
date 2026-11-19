@@ -57,6 +57,27 @@ test('partial write observations preserve records another tab already observed',
   await history.observe(1, fixture.vault, [fixture.entry, other], signal())
 })
 
+test('rotation rejects an authenticated older snapshot before submitting a new key', async () => {
+  const { history } = guard()
+  const key = await importDataKey(new Uint8Array(Buffer.from(fixture.data_key_hex, 'hex')))
+  const latest = { ...fixture.entry, revision: 2, ...await encryptEntry(key, fixture.vault.id, fixture.entry.id, 2, fixture.payload) }
+  let stale = false
+  let rotations = 0
+  const controller = new VaultController({
+    vaults: async () => [fixture.vault], preferences: async () => ({ auto_lock_seconds: 300, lock_on_hidden: true }),
+    entries: async (_id, _signal, onVersion) => { onVersion(version); return [stale ? fixture.entry : latest] },
+    rotateKey: async () => { rotations += 1; throw new Error('must not submit') },
+  }, derive, Date.now, undefined, history)
+  controller.switchAccount(1, false)
+  assert.equal(await controller.load(), true)
+  assert.equal(await controller.unlock(fixture.master), true)
+  stale = true
+  assert.equal(await controller.rotateKey(fixture.master, 'PUBLIC replacement master phrase 17!'), false)
+  assert.equal(rotations, 0)
+  assert.equal(controller.getSnapshot().unlocked, false)
+  assert.match(controller.getSnapshot().error, /older or inconsistent/)
+})
+
 test('pagination awaits each consumer and returns no second materialized ciphertext list', async () => {
   const second = { ...fixture.entry, id: '225830f6-22d3-4f14-a3f0-b211f7db698d' }
   const seen = []

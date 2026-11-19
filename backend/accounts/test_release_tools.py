@@ -17,6 +17,29 @@ def module(name, path):
     return loaded
 
 
+def protect_windows_acl(path):
+    """Make the synthetic source differ from its parent's inherited protection."""
+    import ctypes
+    from ctypes import wintypes
+    library = ctypes.WinDLL("advapi32")
+    pointer = ctypes.c_void_p
+    library.GetNamedSecurityInfoW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                             ctypes.POINTER(pointer), ctypes.POINTER(pointer), ctypes.POINTER(pointer),
+                                             ctypes.POINTER(pointer), ctypes.POINTER(pointer)]
+    library.SetNamedSecurityInfoW.argtypes = [wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD,
+                                             pointer, pointer, pointer, pointer]
+    dacl, descriptor = pointer(), pointer()
+    if library.GetNamedSecurityInfoW(str(path), 1, 4, None, None, ctypes.byref(dacl), None, ctypes.byref(descriptor)):
+        raise OSError("Could not read the synthetic file ACL")
+    try:
+        if library.SetNamedSecurityInfoW(str(path), 1, 0x80000004, None, None, dacl, None):
+            raise OSError("Could not protect the synthetic file ACL")
+    finally:
+        kernel = ctypes.WinDLL("kernel32")
+        kernel.LocalFree.argtypes = [pointer]
+        kernel.LocalFree(descriptor)
+
+
 class SecretStageTests(SimpleTestCase):
     def test_atomic_replacement_preserves_private_access_and_ignores_old_stage(self):
         rotation = module("review_secret_rotation", "deploy/rotate-local-secrets.py")
@@ -25,6 +48,12 @@ class SecretStageTests(SimpleTestCase):
             environment.write_text("PUBLIC old value", encoding="utf-8")
             if os.name != "nt":
                 environment.chmod(0o600)
+            else:
+                protect_windows_acl(environment)
+            original_access = rotation.windows_access(environment) if os.name == "nt" else None
+            if os.name == "nt":
+                if not original_access[0]:
+                    self.skipTest("Filesystem sandbox virtualizes DACL protection; run the native Windows suite.")
             stale = Path(directory) / ".env.rotation-stage"
             stale.write_text("Do not follow or overwrite this path", encoding="utf-8")
             with patch.object(rotation, "ENV", environment):
@@ -34,6 +63,8 @@ class SecretStageTests(SimpleTestCase):
             self.assertFalse(list(Path(directory).glob(".env.rotation-stage-*")))
             if os.name != "nt":
                 self.assertEqual(stat.S_IMODE(environment.stat().st_mode), 0o600)
+            else:
+                self.assertEqual(rotation.windows_access(environment), original_access)
 
     def test_failed_replace_keeps_original_and_removes_only_the_unique_stage(self):
         rotation = module("review_secret_rotation_failure", "deploy/rotate-local-secrets.py")

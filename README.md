@@ -171,6 +171,8 @@ validation.
 For the Windows/Android beta preparation, new two-step verification, optional
 device unlock, browser extension, local replay checks and outstanding release
 items, see [the beta readiness report](docs/beta-readiness.md).
+The [security review fixes](docs/security-fixes-2026-11-19.md) document the
+admin-session gate, recovery-email lifecycle, metadata budgets and UI regressions.
 Use synthetic test entries. Existing CLI files, Fernet data and legacy databases
 have not been migrated or removed. The local `backend/.env` remains untracked
 and ignored; its historical Git copies have not been removed.

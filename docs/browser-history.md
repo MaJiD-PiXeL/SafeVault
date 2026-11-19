@@ -40,3 +40,7 @@ snapshot version/count/continuation checks pass. Existing adapters retain their
 nonstreaming fallback. This is paged processing, not an unlimited streaming
 vault: the final unlocked snapshot and encrypted offline copy still occupy
 memory, and the existing 5,000-entry/32 MiB ciphertext limits remain.
+
+Key rotation authenticates and checks the complete old-key snapshot against
+local history **before** submitting a new key version. This prevents rotation
+from committing a previously observed rollback.

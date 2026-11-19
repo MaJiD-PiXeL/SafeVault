@@ -26,11 +26,16 @@ requires the account password and a fresh authenticator or recovery code.
 Email-based password reset **keeps the second factor enabled**. Losing both the
 authenticator and all recovery codes prevents account sign-in; there is no
 email bypass. The vault recovery key is separate and does not disable TOTP.
-Recovery-code regeneration is currently done by disabling and setting up the
-factor again; do this only on a trusted device.
+Use **Generate new recovery codes** with your password and a fresh authenticator
+or unused recovery code to replace all recovery codes without disabling TOTP.
+Other sessions are revoked. If an enrollment response is lost, the UI fetches
+the enabled state and offers this recovery path; it never silently retries an
+uncertain change. Keep this operation on a trusted device.
 
 Django admin has an authenticator/recovery-code field and requires an enabled
-second factor for password sign-in. Set it up through the account UI first.
+second factor and enrollment-bound verification proof on **every admin request**,
+including sessions created through the account API. Set it up through the
+account UI first. Disabling/re-enrolling invalidates previous admin proof.
 Admin sessions join the regular revocation list and ten-session cap.
 
 Apply `python backend/manage.py migrate accounts` using the backend environment

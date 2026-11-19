@@ -95,8 +95,13 @@ in production.
 
 Open **Account → Recovery email**, enter your account password and send a
 verification link. Existing accounts can enroll through the same form. An
-unverified address can be corrected by repeating enrollment. A verified address
-is fixed in this release. The verification and password reset links expire
+unverified or verified address can be replaced through the same form, or removed
+after explicit acknowledgment. Both operations require the current account
+password and, when enabled, a fresh authenticator or unused recovery code.
+Replacement immediately disables recovery at the old address; the new address
+must be verified before recovery is available again. Other account sessions and
+queued reset requests are revoked. No confirmation at the old mailbox is needed
+when it has been lost or compromised. The verification and password reset links expire
 after 30 minutes and require an explicit confirmation in the app.
 
 On the sign-in page, choose **Forgot your account password?** and enter your
@@ -107,7 +112,10 @@ in again and use your existing master password to unlock your vault.
 
 Link tokens use Django's password reset generator with separate signing
 contexts for the two actions. They bind to the account, its password hash and
-its recovery email state. Verification and reset each consume the corresponding
+its recovery email state and a random enrollment version. Changing, removing,
+resending verification or re-adding even the same address invalidates prior links.
+Apply `accounts.0005` before running updated workers: the migration invalidates
+previous email links, so request new ones after deployment. Verification and reset each consume the corresponding
 link under a user row lock. A reset revokes product sessions. Its password hash
 change also invalidates Django sessions that were created outside the product
 sign-in flow. Link fragments are cleared by the frontend and confirmation

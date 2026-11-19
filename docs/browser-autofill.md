@@ -9,7 +9,8 @@ python native/extension/build.py --origin https://vault.example.com
 The output directory is `native/extension/dist/SafeVault-Extension` and its ZIP
 is alongside it. The default build targets the isolated local beta at
 `http://127.0.0.1:18010`. A new hosted origin requires rebuilding the package.
-Load the output directory as an unpacked extension in Chrome/Edge developer
+Origins are normalized for hostname case and default ports. Use ASCII/Punycode
+hostnames in the package command. Load the output directory as an unpacked extension in Chrome/Edge developer
 mode. This package has not been submitted to either extension store.
 
 Copy the ID from its popup into **Security Center → Browser autofill**. Pair
@@ -26,7 +27,9 @@ pairing takes longer than two minutes.
 The extension has only `activeTab`, `scripting` and `storage` permissions, no
 permanent website host permissions. Its external-message manifest allows only
 the packaged vault hostname; runtime checks further enforce the exact origin,
-source tab, top frame, request token and expiry. Only routing metadata is saved
+source tab, top frame, request token and expiry. The service worker creates the
+source tab inactive, saves its complete routing metadata, then activates it;
+closing the popup cannot interrupt the transaction. Only routing metadata is saved
 in session storage, never credentials. The token is consumed before injection;
 the worker serializes messages to reject concurrent reuse.
 

@@ -24,6 +24,8 @@ Every unlock fetches current vault metadata. A changed master-password wrapper
 or data-key version invalidates device unlock. Account changes, locking and
 cancellation prevent late ceremonies from publishing plaintext. Remove the
 local setup in Security Center and set it up again after a password change.
+The setup form unmounts on lock and is recreated on vault changes so typed
+master-password state does not survive those transitions.
 Removing the local wrapper does not delete the passkey from the OS/provider;
 delete that credential in the provider's own settings if wanted.
 

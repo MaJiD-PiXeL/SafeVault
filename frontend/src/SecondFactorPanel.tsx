@@ -28,9 +28,10 @@ export default function SecondFactorPanel() {
   async function submit(action: 'begin' | 'confirm' | 'disable' | 'regenerate') {
     if (busy || !status) return
     setBusy(true); setError(''); setNotice('')
+    let receivedCodes = false
     try {
       if (action === 'disable') { await accountApi.disableSecondFactor(password, code); setCodes([]) }
-      else if (action === 'confirm' || action === 'regenerate') { setCodes(await accountApi.confirmSecondFactor(password, code, action)); setSetup(null) }
+      else if (action === 'confirm' || action === 'regenerate') { setCodes(await accountApi.confirmSecondFactor(password, code, action)); receivedCodes = true; setSetup(null) }
       else setSetup(await accountApi.beginSecondFactor(password))
       setStatus(await accountApi.secondFactor())
     } catch (reason) {
@@ -41,7 +42,7 @@ export default function SecondFactorPanel() {
         setStatus(current)
         if (current.enabled) {
           setSetup(null)
-          if (action === 'confirm' || action === 'regenerate') setNotice('Two-step verification is enabled. If you did not receive recovery codes, generate new ones below using a fresh authenticator code. Previous recovery codes will be replaced.')
+          if (!receivedCodes && (action === 'confirm' || action === 'regenerate')) setNotice('Two-step verification is enabled. If you did not receive recovery codes, generate new ones below using a fresh authenticator code. Previous recovery codes will be replaced.')
         } else if (action === 'disable') { setCodes([]); setNotice('Two-step verification is disabled.') }
       } catch { setNotice('The result could not be confirmed. Refresh verification status before trying another change.') }
     }

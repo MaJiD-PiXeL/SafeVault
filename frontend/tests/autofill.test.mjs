@@ -3,11 +3,44 @@ import { test } from 'node:test'
 import { readFillRequest, matchesFill, pairExtension, sendFill } from '../src/vault/autofill.ts'
 import { authorized } from '../../native/extension/policy.js'
 import { fillLogin } from '../../native/extension/fill.js'
+import { startFillRequest } from '../../native/extension/routing.js'
 
 const extension = 'a'.repeat(32)
 const token = '225830f6-22d3-4f14-a3f0-b211f7db698d'
 const origin = 'https://example.com'
 const data = { schema_version: 1, website: origin + '/login', username: 'public-user', password: 'synthetic-secret' }
+
+test('worker commits complete routing before focus closes the popup', async () => {
+  let pending
+  const calls = []
+  const api = { runtime: { id: extension }, storage: { session: {
+    remove: async () => { pending = undefined }, set: async value => { pending = value.pending; calls.push('stored') },
+  } }, tabs: {
+    query: async () => [{ id: 7, url: origin + '/login' }],
+    create: async options => { assert.equal(options.active, false); calls.push('created'); return { id: 8 } },
+    update: async (id, options) => {
+      assert.equal(id, 8); assert.equal(options.active, true)
+      assert.equal(pending.sourceTab, 8); assert.equal(pending.targetTab, 7)
+      calls.push('focused') // The popup may disappear at this point.
+    },
+  } }
+  assert.deepEqual(await startFillRequest(api, 'https://vault.test'), { ok: true })
+  assert.deepEqual(calls, ['created', 'stored', 'focused'])
+  assert.equal(authorized({ type: 'safevault.fill.v1', token: pending.token, origin, username: 'u', password: 'p' },
+    { frameId: 0, tab: { id: 8 }, url: 'https://vault.test/' }, pending, 'https://vault.test'), true)
+  api.tabs.query = async () => [{ id: 7, url: 'http://example.com/login' }]
+  await assert.rejects(startFillRequest(api, 'https://vault.test'), /HTTPS/)
+})
+
+test('worker does not focus a source tab when routing storage fails', async () => {
+  let focused = false
+  const api = { runtime: { id: extension }, storage: { session: {
+    remove: async () => {}, set: async () => { throw new Error('synthetic storage failure') },
+  } }, tabs: { query: async () => [{ id: 7, url: origin }], create: async () => ({ id: 8 }),
+    update: async () => { focused = true } } }
+  await assert.rejects(startFillRequest(api, 'https://vault.test'))
+  assert.equal(focused, false)
+})
 
 test('autofill accepts strict one-use routing and matches exact HTTPS origins', () => {
   const valid = '#' + new URLSearchParams({ autofill: extension, token, origin })

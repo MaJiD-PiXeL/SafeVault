@@ -58,6 +58,57 @@ def replacement(text, name, value):
     return re.sub(pattern, name + "=" + value, text)
 
 
+def windows_access(path, destination=None):
+    """Read/copy DACLs through Win32, without a shell or execution-policy change."""
+    import ctypes
+    from ctypes import wintypes
+    import struct
+
+    security = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    pointer = ctypes.c_void_p
+    security.GetNamedSecurityInfoW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                              ctypes.POINTER(pointer), ctypes.POINTER(pointer),
+                                              ctypes.POINTER(pointer), ctypes.POINTER(pointer), ctypes.POINTER(pointer)]
+    security.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    security.SetNamedSecurityInfoW.argtypes = [wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD, pointer, pointer, pointer, pointer]
+    security.SetNamedSecurityInfoW.restype = wintypes.DWORD
+    security.GetSecurityDescriptorControl.argtypes = [pointer, ctypes.POINTER(wintypes.WORD), ctypes.POINTER(wintypes.DWORD)]
+    security.GetSecurityDescriptorControl.restype = wintypes.BOOL
+    security.GetAce.argtypes = [pointer, wintypes.DWORD, ctypes.POINTER(pointer)]
+    security.GetAce.restype = wintypes.BOOL
+    kernel.LocalFree.argtypes = [pointer]
+    kernel.LocalFree.restype = pointer
+    dacl, descriptor = pointer(), pointer()
+    error = security.GetNamedSecurityInfoW(str(path), 1, 4, None, None, ctypes.byref(dacl), None, ctypes.byref(descriptor))
+    if error:
+        raise ctypes.WinError(error)
+    try:
+        control, revision = wintypes.WORD(), wintypes.DWORD()
+        if not security.GetSecurityDescriptorControl(descriptor, ctypes.byref(control), ctypes.byref(revision)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        protected = bool(control.value & 0x1000)
+        if destination is not None:
+            flags = 4 | (0x80000000 if protected else 0x20000000)
+            error = security.SetNamedSecurityInfoW(str(destination), 1, flags, None, None, dacl, None)
+            if error:
+                raise ctypes.WinError(error)
+        # Compare effective ACEs and protection, not self-relative buffer offsets.
+        if not dacl:
+            return protected, None
+        count = struct.unpack("<BBHHH", ctypes.string_at(dacl, 8))[3]
+        entries = []
+        for index in range(count):
+            ace = pointer()
+            if not security.GetAce(dacl, index, ctypes.byref(ace)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            size = struct.unpack("<BBH", ctypes.string_at(ace, 4))[2]
+            entries.append(ctypes.string_at(ace, size))
+        return protected, tuple(entries)
+    finally:
+        kernel.LocalFree(descriptor)
+
+
 def write_env(text):
     if ENV.is_symlink() or not ENV.is_file():
         raise ValueError("The environment must be an existing regular file.")
@@ -66,10 +117,9 @@ def write_env(text):
     try:
         # Apply access controls before any credential bytes reach the stage.
         if os.name == "nt":
-            subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File",
-                            str(ROOT / "deploy" / "copy-file-acl.ps1"), "-Source", str(ENV),
-                            "-Destination", str(staged)], check=True, capture_output=True,
-                           creationflags=subprocess.CREATE_NO_WINDOW)
+            original_access = windows_access(ENV, staged)
+            if windows_access(staged) != original_access:
+                raise RuntimeError("The staged environment did not retain its access rules.")
         else:
             os.fchmod(descriptor, stat.S_IMODE(ENV.stat().st_mode) & 0o600)
         with os.fdopen(descriptor, "wb") as output:
